@@ -74,7 +74,7 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 24
           registry-url: https://registry.npmjs.org
       - name: Verify package version matches tag
         run: |
@@ -82,6 +82,8 @@ jobs:
           if [ "v${PKG_VERSION}" != "${TAG_NAME}" ]; then
             echo "::error::package version ${PKG_VERSION} does not match tag ${TAG_NAME}"; exit 1
           fi
+      - name: Ensure npm supports OIDC trusted publishing
+        run: npm install -g npm@latest
       - run: npm ci
       - run: node --check server.mjs
       - name: Pack
