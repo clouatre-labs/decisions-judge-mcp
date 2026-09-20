@@ -1,0 +1,55 @@
+version = 1
+
+[[annotations]]
+path = ["server.mjs", "bin/**/*"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 clouatre-labs contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["scripts/**/*"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 clouatre-labs contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["docs/**/*"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 clouatre-labs contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = [".github/**/*.yml", ".github/**/*.yaml", ".github/**/*.md"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 clouatre-labs contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["*.json"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 clouatre-labs contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["*.md"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 clouatre-labs contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["*.toml"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 clouatre-labs contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["LICENSE", "README*", "CONTRIBUTING*", "SECURITY*", "CODE_OF_CONDUCT*", "AI_POLICY*"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 clouatre-labs contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = [".gitignore"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 clouatre-labs contributors"
+SPDX-License-Identifier = "Apache-2.0"

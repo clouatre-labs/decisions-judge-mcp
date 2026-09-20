@@ -2,18 +2,16 @@
 
 ## Project overview
 
-<!-- One paragraph: what this repo does, who uses it, primary language/framework. -->
-<!-- Example: "Rust MCP server for code structure analysis using tree-sitter" -->
+decisions-judge-mcp is an MCP stdio server (Node >= 20, ESM, single `server.mjs`) exposing one `judge` tool backed by the @typesafe-ai/sdk: it sends application state plus typed questions (noul, choice, score) to the TypeSafe System One model and returns structured answers; failures return a `{fallback: true, error}` envelope instead of blocking.
 
 ## Stack & Commands
 
-<!-- Fill in: language/runtime, package manager, key frameworks -->
+npm on Node 24; MCP SDK + zod for schema validation.
 
-```
-# build:  <fill in>
-# test:   <fill in>
-# lint:   <fill in>
-# format: <fill in>
+```sh
+# test:   node --check server.mjs && node scripts/smoke.mjs && node scripts/smoke-judge.mjs
+# lint:   npx markdownlint-cli2 "**/*.md"
+# format: npx markdownlint-cli2 --fix "**/*.md"
 ```
 
 ## Development standards
@@ -30,14 +28,11 @@
 
 ## Design references
 
-<!-- Link internal docs the AI agent should read before implementing:
-- ARCHITECTURE.md (if it exists)
-- Any API spec or data model doc
--->
+- docs/developer-setup.md
+- CONTRIBUTING.md
 
 ## Do not
 
 - Add dependencies without justification in the PR description
 - Implement features not specified in the assigned issue
 - Modify files outside the scope of the assigned issue
-<!-- Add project-specific constraints here -->

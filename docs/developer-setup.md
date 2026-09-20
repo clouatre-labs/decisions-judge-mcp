@@ -81,7 +81,7 @@ Add the exported public key under **GitHub Settings > SSH and GPG keys > New GPG
 
 All commits must follow the [Conventional Commits](https://www.conventionalcommits.org/) specification:
 
-```
+```text
 <type>: <description>
 
 [optional body]

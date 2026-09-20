@@ -1,0 +1,17 @@
+// SPDX-FileCopyrightText: 2026 clouatre-labs contributors
+// SPDX-License-Identifier: Apache-2.0
+{
+  "config": {
+    "default": false,
+    "MD001": true,
+    "MD009": {
+      "br_spaces": 2
+    },
+    "MD010": true,
+    "MD035": {
+      "style": "---"
+    }
+  },
+  "globs": ["**/*.md"],
+  "ignores": ["node_modules/**", ".worktrees/**"]
+}
