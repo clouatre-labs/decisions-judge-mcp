@@ -12,6 +12,7 @@
 // Any failure returns { fallback: true, error: "..." } with exit code 0 --
 // never blocks, never prints the token.
 
+import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -58,8 +59,10 @@ const outputSchema = {
   error: z.string().optional(),
 };
 
+const { name, version } = createRequire(import.meta.url)("./package.json");
+
 const server = new McpServer(
-  { name: "decisions-judge-mcp", version: "1.0.0" },
+  { name, version },
   {
     instructions:
       "MCP stdio server exposing a single 'judge' tool that sends application state plus typed questions (noul yes/no probability, choice among options, or score on ordered levels) to the TypeSafe System One model and returns structured answers with model/usage metadata. All questions are answered in one request; failures return a {fallback: true, error} envelope instead of blocking.",
