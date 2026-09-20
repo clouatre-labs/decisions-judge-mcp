@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 aptu-github-app Contributors
+
+name: Aptu Scan Security
+
+on:
+  repository_dispatch:
+    types:
+      - aptu-scan-security
+
+jobs:
+  scan:
+    name: Scan Security
+    permissions:
+      contents: read
+      security-events: write
+      statuses: write
+    uses: clouatre-labs/aptu-github-app/.github/workflows/scan-security.yml@3d3a227339de7384c7cef8b56325fe4d38ebcb94 # v0.1.4
+    with:
+      originating_repo: ${{ github.event.client_payload.originating_repo }}
+      head_sha: ${{ github.event.client_payload.head_sha }}
+      pull_number: ${{ github.event.client_payload.pull_number }}
+      scan_path: ${{ github.event.client_payload.scan_path || '.' }}
+      fail_on: ${{ github.event.client_payload.fail_on || '' }}
+    secrets:
+      installation-token: ${{ github.event.client_payload.installation_token }}
