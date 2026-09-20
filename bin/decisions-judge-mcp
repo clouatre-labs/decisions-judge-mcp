@@ -1,0 +1,19 @@
+#!/bin/sh
+# Launcher for the decisions-judge MCP server. Resolves the script directory so
+# the wrapper works from any PATH location, and maps the legacy TYPESAFE_AI_TOKEN
+# variable onto TYPESAFE_API_KEY for backward compatibility.
+
+TYPESAFE_API_KEY="${TYPESAFE_API_KEY:-$TYPESAFE_AI_TOKEN}"
+export TYPESAFE_API_KEY
+
+# Resolve symlinks (deployed path is ~/.local/bin/decisions-judge-mcp -> repo).
+SELF=$0
+while [ -L "$SELF" ]; do
+  LINK=$(readlink "$SELF")
+  case $LINK in
+    /*) SELF=$LINK ;;
+    *) SELF=$(dirname -- "$SELF")/$LINK ;;
+  esac
+done
+DIR=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
+exec node "$DIR/../server.mjs"
