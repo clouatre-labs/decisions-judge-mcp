@@ -14,5 +14,17 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@typesafe-ai/sdk": "^0.6.0",
     "zod": "^3.25.76"
-  }
+  },
+  "files": [
+    "server.mjs",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clouatre-labs/decisions-judge-mcp.git"
+  },
+  "homepage": "https://github.com/clouatre-labs/decisions-judge-mcp#readme",
+  "bugs": "https://github.com/clouatre-labs/decisions-judge-mcp/issues"
 }
