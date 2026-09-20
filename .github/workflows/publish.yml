@@ -30,37 +30,48 @@ jobs:
       contents: read
     if: github.event_name != 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           fetch-tags: true
+
       - name: Verify tag is signed and points at a release commit on main
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
+
           REF_JSON="$(gh api "repos/${{ github.repository }}/git/refs/tags/${TAG}")"
           TAG_TYPE="$(jq -r '.object.type' <<< "$REF_JSON")"
+          TAG_SHA="$(jq -r '.object.sha' <<< "$REF_JSON")"
+
           if [ "$TAG_TYPE" != "tag" ]; then
             echo "::error::${TAG} is a lightweight tag; release tags must be annotated and signed"
             exit 1
           fi
-          TAG_SHA="$(jq -r '.object.sha' <<< "$REF_JSON")"
-          gh api "repos/${{ github.repository }}/git/tags/${TAG_SHA}" --jq '.verification.verified' | grep -q true || {
-            echo "::error::${TAG} signature not verified"; exit 1; }
+
+          TAG_OBJ_JSON="$(gh api "repos/${{ github.repository }}/git/tags/${TAG_SHA}")"
+          VERIFIED="$(jq -r '.verification.verified' <<< "$TAG_OBJ_JSON")"
+          if [ "$VERIFIED" != "true" ]; then
+            echo "::error::${TAG} signature not verified"; exit 1
+          fi
+
           # The signed tag object must point at the current main head
           MAIN_SHA="$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)"
-          COMMIT_SHA="$(gh api "repos/${{ github.repository }}/git/tags/${TAG_SHA}" --jq '.object.sha')"
+          COMMIT_SHA="$(jq -r '.object.sha' <<< "$TAG_OBJ_JSON")"
           if [ "$COMMIT_SHA" != "$MAIN_SHA" ]; then
             echo "::error::${TAG} does not point at main HEAD (${MAIN_SHA}); got ${COMMIT_SHA}"
             exit 1
           fi
+
           echo "Tag ${TAG} verified: signed, annotated, points at main HEAD"
 
   publish:
+    name: Publish to npm
     needs: verify-tag-signature
     if: always() && (needs.verify-tag-signature.result == 'success' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     environment: npm-publish
     permissions:
       contents: read
@@ -69,25 +80,41 @@ jobs:
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
       TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false # never cache in release builds
+
       - name: Verify package version matches tag
         run: |
           PKG_VERSION="$(node -p "require('./package.json').version")"
           if [ "v${PKG_VERSION}" != "${TAG_NAME}" ]; then
             echo "::error::package version ${PKG_VERSION} does not match tag ${TAG_NAME}"; exit 1
           fi
+
       - name: Ensure npm supports OIDC trusted publishing
         run: npm install -g npm@latest
-      - run: npm ci
-      - run: node --check server.mjs
-      - name: Pack
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax check server.mjs
+        run: node --check server.mjs
+
+      - name: Pack tarball
         run: npm pack
-      - name: Publish
+
+      - name: Publish to npm with provenance
         if: env.DRY_RUN != 'true'
         run: npm publish --provenance --access public decisions-judge-mcp-*.tgz
+
+      - name: Dry run - skip publish
+        if: env.DRY_RUN == 'true'
+        run: echo "DRY RUN - tarball built and checks passed; publish skipped"
