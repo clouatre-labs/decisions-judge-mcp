@@ -25,7 +25,7 @@ SPDX-FileCopyrightText = "2026 clouatre-labs contributors"
 SPDX-License-Identifier = "Apache-2.0"
 
 [[annotations]]
-path = ["*.json"]
+path = ["*.json", "*.jsonc"]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 clouatre-labs contributors"
 SPDX-License-Identifier = "Apache-2.0"

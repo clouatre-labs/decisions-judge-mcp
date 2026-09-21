@@ -50,6 +50,8 @@ proc.stdout.on("data", (chunk) => {
     if (msg.id === 1) {
       clearTimeout(timer);
       const result = msg.result;
+      // 2025-11-25 is the MCP SDK's LATEST_PROTOCOL_VERSION (verified in
+      // @modelcontextprotocol/sdk dist/esm/types.js); revisit on SDK upgrades.
       if (!result || !result.serverInfo || result.protocolVersion !== "2025-11-25") {
         fail(`initialize result missing serverInfo or wrong protocolVersion (expected 2025-11-25): ${JSON.stringify(msg).slice(0, 300)}`);
       }
