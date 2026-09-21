@@ -26,6 +26,11 @@ npm on Node 24; MCP SDK + zod for schema validation.
 - One happy path and one edge case per behavior; no redundant variations
 - AAA pattern (Arrange, Act, Assert); keep each test focused and short
 
+## Releases
+
+- Release via signed, annotated tag on `main` HEAD (`git tag -s vX.Y.Z`); the `publish` workflow verifies the signature, creates a GitHub Release with generated notes, and publishes to npm with provenance.
+- The "Bypassed rule violations" audit event on tag push is expected: the Release Tag Protection ruleset grants admins a deliberate `always` bypass; the audit event is the trail. See CONTRIBUTING.md.
+
 ## Design references
 
 - CONTRIBUTING.md
