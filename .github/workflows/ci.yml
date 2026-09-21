@@ -5,11 +5,47 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref && github.ref || github.run_id }}
+  cancel-in-progress: true
+
 permissions: {}
 
 jobs:
-  ci:
+  commitlint:
+    name: Lint Commits
     runs-on: ubuntu-24.04-arm
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24"
+      - name: Install commitlint
+        run: |
+          npm install --no-save \
+            @commitlint/cli@20.5.3 \
+            @commitlint/config-conventional@20.5.3
+      - name: Validate commit messages
+        run: |
+          npx commitlint \
+            --from ${{ github.event.pull_request.base.sha }} \
+            --to ${{ github.event.pull_request.head.sha }} \
+            --verbose
+
+  test:
+    name: Test
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -27,3 +63,37 @@ jobs:
 
       - name: Smoke test MCP stdio handshake
         run: node scripts/smoke.mjs
+
+      - name: Smoke test judge fallback envelope
+        run: node scripts/smoke-judge.mjs
+
+  lint-docs:
+    name: Lint Docs
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24"
+      - name: Lint markdown
+        run: npx markdownlint-cli2@0.23.1 '**/*.md' '#.worktrees' '#.handoff'
+
+  ci-result:
+    name: CI Result
+    runs-on: ubuntu-24.04-arm
+    if: always()
+    permissions: {}
+    needs: [commitlint, test, lint-docs]
+    steps:
+      - name: Verify all jobs passed or were skipped
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "::error::One or more CI jobs failed or were cancelled."
+            exit 1
+          fi
+          echo "All CI jobs passed or were skipped."

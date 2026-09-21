@@ -4,7 +4,7 @@
 
 All commits must follow [Conventional Commits](https://www.conventionalcommits.org/):
 
-```
+```text
 <type>(<scope>): <short description>
 ```
 
@@ -42,6 +42,7 @@ git checkout -b feat/short-description origin/main
 ## Merge Strategy and Cleanup
 
 This repository enforces a **squash-merge only** policy:
+
 - Merge commits are disabled; only squash merges are allowed
 - Rebase merges are also disabled
 - After merge, the source branch is deleted automatically
