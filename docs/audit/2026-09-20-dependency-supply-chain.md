@@ -61,6 +61,8 @@ The lockfile records 95 production packages (path-keyed BFS from the root over `
 
 **Estimate:** upstream issue only; no local code change.
 
+**Remediation note (2026-09-21):** Resolved by upstream SDK v2 rather than an upstream issue. `@modelcontextprotocol/server` 2.0.0 (stable, implements the 2026-07-28 MCP spec) moved HTTP transports into opt-in separate packages (`@modelcontextprotocol/express`, `@modelcontextprotocol/fastify`); its stdio-only closure is 3 packages total. This repository migrated in #15: production closure dropped from 95 to 4 packages, `express`/`hono`/`cors`/`express-rate-limit`/`qs`/`body-parser` are no longer in the lockfile, `npm audit` reports 0 vulnerabilities, and the stdio smoke check passes (protocol 2025-11-25 negotiated).
+
 ---
 
 ### F2 -- CONFIRMED-benign -- Lifecycle-script alerts are install-time false positives
