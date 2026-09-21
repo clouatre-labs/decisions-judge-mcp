@@ -1,1 +1,2 @@
-# No unavoidable findings to suppress currently.
+# Minimal valid zizmor config; no findings are currently suppressed.
+rules: {}
