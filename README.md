@@ -2,9 +2,6 @@
 
 [![CI](https://github.com/clouatre-labs/decisions-judge-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/clouatre-labs/decisions-judge-mcp/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/decisions-judge-mcp.svg)](https://www.npmjs.com/package/decisions-judge-mcp)
-[![npm downloads](https://img.shields.io/npm/dm/decisions-judge-mcp.svg)](https://www.npmjs.com/package/decisions-judge-mcp)
-[![Node >= 20](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](package.json)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 **Typed decisions for AI agents, as an MCP tool.** Ask yes/no probability (`noul`), choice among options, or score on ordered levels about any JSON application state. All questions answered in one fast request; failures return a `{fallback: true, error}` envelope instead of blocking, so it is safe to compose into agent workflows.
 
@@ -55,7 +52,7 @@ Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clou
 
 ## Quickstart
 
-Requires Node >= 20 and `TYPESAFE_API_KEY` in the environment (`TYPESAFE_AI_TOKEN` is accepted as a legacy fallback).
+Requires Node >= 20 and `TYPESAFE_API_KEY` in the environment.
 
 ```sh
 # run on demand via npx (no global install)

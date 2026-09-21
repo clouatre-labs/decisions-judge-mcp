@@ -6,8 +6,7 @@
 // raw typed answers plus model/usage metadata. Retries, timeouts, and model
 // resolution (jev-latest) are owned by @typesafe-ai/sdk.
 //
-// Auth: TYPESAFE_API_KEY (SDK standard); TYPESAFE_AI_TOKEN is accepted as a
-// fallback for backward compatibility with the retired bash script.
+// Auth: TYPESAFE_API_KEY (SDK standard).
 //
 // Any failure returns { fallback: true, error: "..." } with exit code 0 --
 // never blocks, never prints the token.
@@ -17,10 +16,6 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import { TypeSafeClient, choice, noul, score } from "@typesafe-ai/sdk";
-
-if (!process.env.TYPESAFE_API_KEY && process.env.TYPESAFE_AI_TOKEN) {
-  process.env.TYPESAFE_API_KEY = process.env.TYPESAFE_AI_TOKEN;
-}
 
 const questionSpec = z.object({
   type: z.enum(["noul", "choice", "score"]).default("noul"),
