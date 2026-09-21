@@ -28,7 +28,7 @@ When reviewing `.github/workflows/` changes:
   the server must stay responsive over stdio.
 - Flag unbounded stdout writes outside the MCP JSON-RPC protocol; stdout is the transport
   channel — diagnostics belong on stderr.
-- Flag secret leakage: `TYPESAFE_API_KEY` (or the `TYPESAFE_AI_TOKEN` fallback) must never
+- Flag secret leakage: `TYPESAFE_API_KEY` must never
   be logged, echoed, or included in error payloads or tool responses.
 - Flag changes that alter the failure contract: any tool failure must return
   `{ fallback: true, error: "..." }` and never throw past the tool boundary or exit nonzero.
