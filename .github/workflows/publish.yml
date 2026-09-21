@@ -89,10 +89,12 @@ jobs:
           fi
           # Idempotent: skip creation if release already exists; if creation fails with 422
           # (concurrent race), the final view confirms existence and exits 0.
+          # No --generate-notes: for an annotated tag, gh uses the tag annotation as the
+          # release body, making the (signed) tag message the source of truth for notes.
           gh release view "${TAG_NAME}" &>/dev/null \
             || gh release create "${TAG_NAME}" \
               --title "${TAG_NAME}" \
-              --generate-notes \
+              --verify-tag \
             || gh release view "${TAG_NAME}" &>/dev/null
 
       - name: Dry run - skip release creation

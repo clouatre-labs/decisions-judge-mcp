@@ -28,7 +28,14 @@ npm on Node 24; MCP SDK + zod for schema validation.
 
 ## Releases
 
-- Release via signed, annotated tag on `main` HEAD (`git tag -s vX.Y.Z`); the `publish` workflow verifies the signature, creates a GitHub Release with generated notes, and publishes to npm with provenance.
+Release is exactly two steps:
+
+1. PR bumping `package.json` to the next semver version (the `publish` workflow fails the tag if the version does not match).
+2. After it merges: `git tag -s vX.Y.Z` on `main` HEAD and push the tag. The workflow handles signature verification, GitHub Release, and npm publish with provenance.
+
+- Release tags are **immutable**: never delete, re-push, or move a tag that has already been pushed, even to fix a failed release. Fix forward instead (a new PR, then a new patch tag `vX.Y.Z+1`).
+- If the publish run fails: report the failure, lay out options, and stop for a human decision. Do not open CI-fix PRs or take destructive actions (tag delete/re-push, workflow edits) mid-release without approval.
+- Never modify the release workflow as part of a release; workflow changes go through their own reviewed PR outside a release window.
 - The "Bypassed rule violations" audit event on tag push is expected: the Release Tag Protection ruleset grants admins a deliberate `always` bypass; the audit event is the trail. See CONTRIBUTING.md.
 
 ## Design references
