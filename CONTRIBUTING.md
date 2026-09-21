@@ -56,6 +56,30 @@ Squash merges produce a linear, readable commit history; each PR becomes one log
 
 Automatic branch deletion removes the source branch immediately after merge, eliminating stale branches and keeping the branch list manageable. If you need to retain a feature branch for reference, create a tag pointing to the branch's tip commit before merging.
 
+## Release process
+
+Releases follow the tagged-release workflow used across clouatre-labs repos:
+
+1. Merge the release PR (`chore(release): vX.Y.Z`) with all checks green.
+2. Create a signed, annotated tag pointing at the `main` HEAD commit and push it:
+
+   ```bash
+   git tag -s vX.Y.Z -m "vX.Y.Z" origin/main
+   git push origin vX.Y.Z
+   ```
+
+3. The `publish` workflow then runs automatically:
+   - Verifies the tag is signed, annotated, and points at `main` HEAD.
+   - Creates a GitHub Release with automatically generated notes.
+   - Publishes the package to npm with provenance (OIDC trusted publishing).
+
+Note on tag creation: the organization's "Release Tag Protection" ruleset
+restricts creation of `v*.*.*` tags, but grants organization admins and the
+write role an `always` bypass. Pushing a release tag therefore records a
+"Bypassed rule violations" event in the audit log — this is expected and is the
+audit trail for the release. The workflow's signature and main-HEAD checks are
+the enforced gates.
+
 ## PR checklist
 
 - [ ] Linked issue in the PR description
