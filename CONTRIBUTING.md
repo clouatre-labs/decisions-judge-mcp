@@ -1,5 +1,10 @@
 # Contributing
 
+## Local setup
+
+- Tools: git, [gh](https://cli.github.com/), GPG (commit signing), SSH with a key registered on GitHub.
+- Authenticate: `gh auth login`; verify with `ssh -T git@github.com && gh auth status`.
+
 ## Commit conventions
 
 All commits must follow [Conventional Commits](https://www.conventionalcommits.org/):
