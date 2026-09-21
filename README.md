@@ -1,30 +1,64 @@
 # decisions-judge-mcp
 
-A small MCP server exposing a single **`judge`** tool: send natural language plus JSON application state, get back **typed judgments** — yes/no probability (`noul`), choice among options, or score on ordered levels — in one fast request, with model/usage metadata. Failures return a `{fallback: true, error}` envelope instead of blocking, so it is safe to compose into agent workflows.
+[![CI](https://github.com/clouatre-labs/decisions-judge-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/clouatre-labs/decisions-judge-mcp/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/decisions-judge-mcp.svg)](https://www.npmjs.com/package/decisions-judge-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/decisions-judge-mcp.svg)](https://www.npmjs.com/package/decisions-judge-mcp)
+[![Node >= 20](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](package.json)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+**Typed decisions for AI agents, as an MCP tool.** Ask yes/no probability (`noul`), choice among options, or score on ordered levels about any JSON application state. All questions answered in one fast request; failures return a `{fallback: true, error}` envelope instead of blocking, so it is safe to compose into agent workflows.
 
 Currently backed by the [TypeSafe System One](https://typesafe.ai) model (Jev) via [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk). The provider-neutral `judge` primitive maps naturally onto related decision APIs such as [OpenRouter alphadecisions](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request).
 
 Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clouatre-labs/agentic-coder-skill).
 
-## Tool: `judge`
+## Why
 
-Input:
+- **Programmable common sense**: judgment as a primitive your code can branch on, not a prompt-and-parse loop
+- **Typed answers**: probabilities, options, and ordered levels, validated by schema
+- **One request, many questions**: batch an entire decision tree in a single call
+- **Never blocks**: fallback envelope on any failure keeps agents running
 
-- `state` — JSON object or string (application state)
-- `questions` — map of name → `{type: "noul"|"choice"|"score", instructions, criteria?}`
-  - `noul`: criteria omitted; answer is a yes/no probability
-  - `choice`: criteria is `{option: description|null}`
-  - `score`: criteria is an ordered array of level descriptions
-- `timeout_ms` — optional, max 60000
+## Example
 
-Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failure.
+```jsonc
+// judge tool call
+{
+  "state": { "tests": "passing", "lint": "clean", "filesChanged": 3 },
+  "questions": {
+    "ready_to_merge": {
+      "type": "noul",
+      "instructions": "Is this change safe to merge?"
+    },
+    "next_step": {
+      "type": "choice",
+      "instructions": "What should the agent do next?",
+      "criteria": {
+        "merge": "create the merge commit",
+        "iterate": "keep refining the change",
+        "escalate": "hand back to the human"
+      }
+    }
+  }
+}
+```
 
-## Install
+```jsonc
+// response
+{
+  "answers": { "ready_to_merge": 0.93, "next_step": "merge" },
+  "model": "jev-latest",
+  "usage": { "requests": 1 },
+  "fallback": false
+}
+```
+
+## Quickstart
 
 Requires Node >= 20 and `TYPESAFE_API_KEY` in the environment (`TYPESAFE_AI_TOKEN` is accepted as a legacy fallback).
 
 ```sh
-# recommended: run on demand via npx (no global install)
+# run on demand via npx (no global install)
 npx -y decisions-judge-mcp
 
 # or pin a version for supply-chain reproducibility
@@ -40,9 +74,7 @@ npm i -g decisions-judge-mcp
 
 ## MCP client configuration
 
-All examples use `npx -y`, the standard pattern for Node-based MCP servers
-(see Context7 and Brave Search). Swap in `decisions-judge-mcp@<version>` in the
-`args` if you prefer pinning.
+All examples use `npx -y`, the standard pattern for Node-based MCP servers. Swap in `decisions-judge-mcp@<version>` in the `args` if you prefer pinning.
 
 **pi** (`~/.config/pi/mcp.json` or equivalent):
 
@@ -58,25 +90,11 @@ All examples use `npx -y`, the standard pattern for Node-based MCP servers
 }
 ```
 
-**Claude Code** — one command:
+**Claude Code** (one command):
 
 ```sh
 claude mcp add --scope user decisions-judge \
   --env TYPESAFE_API_KEY=... -- npx -y decisions-judge-mcp
-```
-
-Or in `~/.claude.json`:
-
-```json
-{
-  "mcpServers": {
-    "decisions-judge": {
-      "command": "npx",
-      "args": ["-y", "decisions-judge-mcp"],
-      "env": { "TYPESAFE_API_KEY": "..." }
-    }
-  }
-}
 ```
 
 **goose** (`~/.config/goose/config.yaml`):
@@ -102,15 +120,32 @@ mcp:
 }
 ```
 
+## Tool reference: `judge`
+
+| Input | Type | Description |
+| --- | --- | --- |
+| `state` | object \| string | JSON application state to judge |
+| `questions` | map | name → question spec (see below) |
+| `timeout_ms` | number, optional | max 60000 |
+
+| Question type | `criteria` | Answer |
+| --- | --- | --- |
+| `noul` | omit | yes/no probability |
+| `choice` | `{option: description\|null}` | winning option name |
+| `score` | ordered array of level descriptions | best matching level |
+
+Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failure.
+
 ## Development
 
 ```sh
 npm ci
 node --check server.mjs
 node scripts/smoke.mjs         # MCP stdio initialize handshake
+node scripts/smoke-judge.mjs   # judge fallback envelope (no API key needed)
 node server.mjs                # stdio server; needs TYPESAFE_API_KEY to answer
 ```
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE).
+Apache-2.0, see [LICENSE](LICENSE).
