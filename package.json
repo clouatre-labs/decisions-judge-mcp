@@ -1,6 +1,6 @@
 {
   "name": "decisions-judge-mcp",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "MCP server exposing an LLM judge (typed decisions: yes/no probability, choice, score) for coding agents. Backed by the TypeSafe System One model; shared by pi, Claude Code, and goose.",
   "type": "module",
   "bin": {
