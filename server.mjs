@@ -20,8 +20,12 @@ import { TypeSafeClient, choice, noul, score } from "@typesafe-ai/sdk";
 const questionSpec = z.object({
   type: z.enum(["noul", "choice", "score"]).default("noul"),
   instructions: z.string().min(1),
-  // noul: null/omitted. choice: {option: description|null}. score: [level descriptions].
-  criteria: z.union([z.record(z.string(), z.string().nullable()), z.array(z.string())]).optional(),
+  // noul: {true, false} descriptions (optional). choice: {option: description|null}.
+  // score: [level descriptions] (>= 2).
+  criteria: z.union([
+    z.record(z.string(), z.string().nullable()),
+    z.array(z.string()).min(2),
+  ]).optional(),
 });
 
 const inputSchema = {
@@ -38,12 +42,12 @@ function buildQuestion(spec) {
     return choice(spec.instructions, spec.criteria);
   }
   if (spec.type === "score") {
-    if (!Array.isArray(spec.criteria) || spec.criteria.length === 0) {
-      throw new Error(`score question requires criteria as an ordered array of level descriptions`);
+    if (!Array.isArray(spec.criteria) || spec.criteria.length < 2) {
+      throw new Error(`score question requires criteria as an ordered array of at least two level descriptions`);
     }
     return score(spec.instructions, spec.criteria);
   }
-  return noul(spec.instructions);
+  return noul(spec.instructions, spec.criteria);
 }
 
 const outputSchema = {
@@ -53,6 +57,12 @@ const outputSchema = {
   fallback: z.boolean(),
   error: z.string().optional(),
 };
+
+// Lazily-created client, cached for the process lifetime; auth via TYPESAFE_API_KEY.
+let client;
+function getClient() {
+  return (client ??= new TypeSafeClient());
+}
 
 const { name, version } = createRequire(import.meta.url)("./package.json");
 
@@ -71,6 +81,11 @@ server.registerTool(
       "Ask the TypeSafe System One model (Jev) typed questions (noul yes/no probability, choice among options, score on ordered levels) about JSON application state. All questions are answered in one fast request. Returns {answers, model, usage} on success or {fallback: true, error} on any failure.",
     inputSchema,
     outputSchema,
+    annotations: {
+      title: "TypeSafe Judge",
+      readOnlyHint: true,
+      openWorldHint: true,
+    },
   },
   async ({ state, questions, timeout_ms }) => {
     let qmap;
@@ -89,8 +104,7 @@ server.registerTool(
       };
     }
     try {
-      const client = new TypeSafeClient();
-      const result = await client.systemOne(
+      const result = await getClient().systemOne(
         { state, questions: qmap },
         timeout_ms ? { timeout: timeout_ms } : undefined,
       );
