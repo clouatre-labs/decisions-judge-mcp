@@ -44,9 +44,17 @@ Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clou
 ```jsonc
 // response
 {
-  "answers": { "ready_to_merge": 0.93, "next_step": "merge" },
+  "answers": {
+    "ready_to_merge": { "type": "noul", "noul": 0.93 },
+    "next_step": {
+      "type": "choice",
+      "choice": "merge",
+      "confidence": 0.97,
+      "probabilities": { "merge": 0.97, "iterate": 0.02, "escalate": 0.01 }
+    }
+  },
   "model": "jev-latest",
-  "usage": { "requests": 1 },
+  "usage": { "input_tokens": 214, "output_tokens": 18 },
   "fallback": false
 }
 ```
