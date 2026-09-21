@@ -1,7 +1,7 @@
 {
   "name": "decisions-judge-mcp",
   "version": "1.1.0",
-  "description": "MCP server exposing an LLM judge (typed decisions: yes/no probability, choice, score) for coding agents. Backed by the TypeSafe System One model; shared by pi, Claude Code, and goose.",
+  "description": "Typed decisions for AI agents as an MCP tool: yes/no probability (noul), choice, and score about JSON state in one fast request, with a fallback envelope that never blocks. Backed by the TypeSafe System One model; shared by pi, Claude Code, and goose.",
   "type": "module",
   "bin": {
     "decisions-judge-mcp": "./server.mjs"
