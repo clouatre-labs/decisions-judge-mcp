@@ -61,7 +61,7 @@ const outputSchema = z.object({
 // Lazily-created client, cached for the process lifetime; auth via TYPESAFE_API_KEY.
 let client;
 function getClient() {
-  return (client ??= new TypeSafeClient());
+  return (client ??= new TypeSafeClient({ logLevel: "off" }));
 }
 
 const { name, version } = createRequire(import.meta.url)("./package.json");
