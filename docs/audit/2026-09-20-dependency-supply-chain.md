@@ -3,7 +3,7 @@
 Date: 2026-09-20  
 Commit: 5293085  
 Version: v1.0.3  
-Toolchain: Node >= 20 / npm / @modelcontextprotocol/sdk 1.30.0 / zod 4.6.5
+Toolchain: Node >= 20 / npm 11.19.1 / Node v26.9.0 / @modelcontextprotocol/sdk 1.30.0 / zod 4.6.5
 
 ## See Also
 
@@ -17,7 +17,7 @@ Scope: lockfile closure analysis, `server.mjs` import surface, lifecycle script 
 
 ## Methodology
 
-Direct analysis of the local tree: `package-lock.json` closure counts computed programmatically (95 production packages excluding the root; BFS over `dependencies` and `peerDependencies` edges from `node_modules/@modelcontextprotocol/sdk`), `hasInstallScript` scan across all lockfile entries, `server.mjs` import statements read directly, and `.github/workflows/publish.yml` read end to end. Verdicts:
+Direct analysis of the local tree: `package-lock.json` closure counts computed programmatically (95 production packages excluding the root; BFS over `dependencies` and `peerDependencies` edges from `node_modules/@modelcontextprotocol/sdk`), `hasInstallScript` scan across all lockfile entries, `server.mjs` import statements read directly, an ESM loader trace of server startup, and `.github/workflows/publish.yml` read end to end. Verdicts:
 
 - **CONFIRMED**: claim fully verified against the local tree.
 - **PARTIAL**: partially verifiable; remainder not checkable locally.
@@ -25,17 +25,37 @@ Direct analysis of the local tree: `package-lock.json` closure counts computed p
 
 The Socket score (71) and the 8-high-alerts banner are screenshot-sourced facts from the 2026-09-20 report; alert names and per-package scores beyond that banner are not asserted here.
 
+## Reproduction
+
+Run from a checkout of this repository at the audited commit, with npm 11.19.1 and Node v26.9.0:
+
+```sh
+node -e "const l=require('./package-lock.json'); console.log(Object.keys(l.packages).length - 1)"
+
+node -e "const l=require('./package-lock.json'); console.log(Object.values(l.packages).filter(p => p.hasInstallScript).length)"
+
+node -e "const l=require('./package-lock.json'); const R=new Set(['@modelcontextprotocol/sdk']); let q=['node_modules/@modelcontextprotocol/sdk']; while(q.length){const p=l.packages[q.shift()]||{}; for(const deps of [p.dependencies, p.peerDependencies, p.optionalDependencies]) for(const d of Object.keys(deps||{})) {const k='node_modules/'+d; if(l.packages[k] && !R.has(d)){R.add(d); q.push(k);}}} const name=k=>k.split('node_modules/').pop(); console.log(Object.keys(l.packages).filter(Boolean).filter(k=>R.has(name(k))).length)"
+
+printf 'export async function resolve(s, c, n) { console.error(s); return n(s, c); }\n' > /tmp/trace.mjs
+
+NODE_OPTIONS="--experimental-loader /tmp/trace.mjs" node server.mjs 2>&1 | grep -Ec "express|hono|cors|express-rate-limit|body-parser|qs" || true
+
+npm audit
+```
+
+The loader trace prints every module URL resolved at server startup; the grep count is 0, confirming none of the HTTP transport packages load on the stdio path.
+
 ---
 
 ## Findings
 
 ### F1 -- CONFIRMED -- Oversized MCP SDK transport surface
 
-The lockfile records 95 production packages; 94 of them sit inside the `@modelcontextprotocol/sdk` 1.30.0 closure (verified by BFS over lockfile dependency edges). The SDK pulls in HTTP transport stacks -- `express`, `hono`, `cors`, `express-rate-limit`, `qs`, `body-parser` are all present in the lockfile -- but `server.mjs` imports only `McpServer` and `StdioServerTransport` from the SDK (`server.mjs:16-17`). None of the HTTP transport packages execute in the stdio-only deployment this server ships.
+The lockfile records 95 production packages; 94 of them sit inside the `@modelcontextprotocol/sdk` 1.30.0 closure (verified by BFS over lockfile dependency edges). The SDK pulls in HTTP transport stacks -- `express`, `hono`, `cors`, `express-rate-limit`, `qs`, `body-parser` are all present in the lockfile -- but `server.mjs` imports only `McpServer` and `StdioServerTransport` from the SDK (`server.mjs:16-17`). None of the HTTP transport packages execute in the stdio-only deployment this server ships. This was verified empirically, not just by reading imports: an ESM loader trace (`NODE_OPTIONS="--experimental-loader /tmp/trace.mjs" node server.mjs`, with a resolve-hook loader in `/tmp/trace.mjs` logging every module URL resolved) shows zero `express`/`hono`/`cors`/`express-rate-limit`/`body-parser`/`qs` modules loaded at server startup on Node v26.9.0. This proves the SDK entry point does not eagerly import the web-server stack for the stdio path (see Reproduction).
 
 **Files:** `package-lock.json`, `server.mjs`
 
-**Fix:** No change in this repository. File an upstream issue on `modelcontextprotocol/typescript-sdk` proposing that HTTP transport frameworks (`express`, `hono`, `cors`, `express-rate-limit`) and their transitive deps become optional or peer dependencies so stdio-only consumers do not install them. Until upstream moves, the extra packages are inert: they are never imported by `server.mjs` and are excluded from the published tarball surface exercised at runtime.
+**Fix:** No change in this repository. File an upstream issue on `modelcontextprotocol/typescript-sdk` proposing that HTTP transport frameworks (`express`, `hono`, `cors`, `express-rate-limit`) and their transitive deps become optional or peer dependencies so stdio-only consumers do not install them. Once the upstream issue is filed, append its URL to this paragraph. Until upstream moves, the extra packages are inert: they are never imported by `server.mjs` and are excluded from the published tarball surface exercised at runtime.
 
 **Estimate:** upstream issue only; no local code change.
 
@@ -43,7 +63,7 @@ The lockfile records 95 production packages; 94 of them sit inside the `@modelco
 
 ### F2 -- CONFIRMED-benign -- Lifecycle-script alerts are install-time false positives
 
-The lockfile contains zero `hasInstallScript` entries (verified by scanning every `packages` entry). Packages such as `path-to-regexp`, `ip-address`, and `express-rate-limit` declare `prepare` scripts, but `prepare` runs only when the package itself is built from a git checkout (i.e., upstream development), never during a consumer `npm ci`. Socket flags script presence without distinguishing lifecycle phases, so these alerts do not represent code that executes on install for consumers of this package.
+The lockfile contains zero `hasInstallScript` entries (verified by scanning every `packages` entry). Packages such as `path-to-regexp`, `ip-address`, and `express-rate-limit` declare `prepare` scripts. Per npm lifecycle semantics, `prepare` and `prepack` scripts run only when the package itself is built from a git checkout -- that is, during that package's own development or publish flow -- and never during a consumer's `npm ci` or `npm install`; npm additionally strips `prepare` from the published-tarball install path. npm records `hasInstallScript` in the lockfile only for packages declaring `install`, `preinstall`, or `postinstall` scripts, and this lockfile shows zero such entries. The zero-`hasInstallScript` scan is therefore corroboration of the npm-semantics argument, not standalone proof. Socket flags script presence without distinguishing lifecycle phases, so these alerts do not represent code that executes on install for consumers of this package.
 
 **Files:** `package-lock.json`
 
