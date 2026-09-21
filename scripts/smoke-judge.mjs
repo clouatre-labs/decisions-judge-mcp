@@ -72,13 +72,61 @@ proc.stdout.on("data", (chunk) => {
         fail(`expected criteria error, got: ${text.slice(0, 200)}`);
       }
       console.log(`smoke-judge: OK (fallback envelope: ${payload.error})`);
+      // Arrange: widened schema acceptance -- structured (object) instructions,
+      // a JSON criteria value, array state, and a model override. Offline the
+      // call falls back, but the input must NOT be rejected by zod.
+      send({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "judge",
+          arguments: {
+            state: ["alpha", { beta: true }],
+            model: "jev-latest",
+            questions: {
+              q: {
+                type: "noul",
+                instructions: { text: "is the feature healthy?", locale: "en" },
+                criteria: { true: { detail: "yes" }, false: "no" },
+              },
+            },
+          },
+        },
+      });
+      timer = setTimeout(
+        () => fail(`no response within ${TIMEOUT_MS}ms`),
+        TIMEOUT_MS,
+      );
+    } else if (msg.id === 3) {
+      clearTimeout(timer);
+      const text3 = msg.result?.content?.[0]?.text;
+      if (!text3) {
+        fail(`tools/call result missing content: ${JSON.stringify(msg).slice(0, 300)}`);
+      }
+      if (msg.error || /input validation|invalid_input|Invalid arguments/i.test(text3)) {
+        fail(`widened input rejected by schema: ${JSON.stringify(msg).slice(0, 300)}`);
+      }
+      let payload3;
+      try {
+        payload3 = JSON.parse(text3);
+      } catch {
+        fail(`content is not a JSON payload: ${String(text3).slice(0, 200)}`);
+      }
+      if (typeof payload3.fallback !== "boolean") {
+        fail(`expected fallback boolean, got: ${text3.slice(0, 200)}`);
+      }
+      if (payload3.error && /criteria/i.test(payload3.error)) {
+        fail(`unexpected criteria error for structured input: ${text3.slice(0, 200)}`);
+      }
+      console.log(`smoke-judge: OK (widened inputs accepted, fallback=${payload3.fallback})`);
       proc.kill("SIGKILL");
       process.exit(0);
     }
   }
 });
 
-const timer = setTimeout(
+let timer = setTimeout(
   () => fail(`no response within ${TIMEOUT_MS}ms`),
   TIMEOUT_MS,
 );
