@@ -28,7 +28,6 @@ npm on Node 24; MCP SDK + zod for schema validation.
 
 ## Design references
 
-- docs/developer-setup.md
 - CONTRIBUTING.md
 
 ## Do not
