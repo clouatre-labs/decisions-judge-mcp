@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Contributing Guidelines
+    url: https://github.com/clouatre-labs/decisions-judge-mcp/blob/main/CONTRIBUTING.md
+    about: Please read our contributing guidelines before opening an issue.
+  - name: Security vulnerability
+    url: https://github.com/clouatre-labs/decisions-judge-mcp/security/advisories/new
+    about: Report a security vulnerability via GitHub private advisory
