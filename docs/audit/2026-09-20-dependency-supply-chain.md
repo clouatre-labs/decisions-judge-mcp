@@ -57,7 +57,7 @@ The lockfile records 95 production packages (path-keyed BFS from the root over `
 
 **Files:** `package-lock.json`, `server.mjs`
 
-**Fix:** No change in this repository. File an upstream issue on `modelcontextprotocol/typescript-sdk` proposing that HTTP transport frameworks (`express`, `hono`, `cors`, `express-rate-limit`) and their transitive deps become optional or peer dependencies so stdio-only consumers do not install them. Once the upstream issue is filed, append its URL to this paragraph. Until upstream moves, the extra packages are inert: they are never imported by `server.mjs` and are excluded from the published tarball surface exercised at runtime.
+**Fix:** Resolved 2026-09-21 by migrating to `@modelcontextprotocol/server` 2.0.0 (#15): SDK v2 moved HTTP transports into opt-in separate packages, so the stdio-only production closure no longer contains them.
 
 **Estimate:** upstream issue only; no local code change.
 
@@ -107,15 +107,15 @@ Direct dependencies are exactly three: `@modelcontextprotocol/sdk` (^1.30.0), `@
 
 | Finding | Verdict | Action |
 |---|---|---|
-| F1 Oversized MCP SDK transport surface | CONFIRMED | upstream issue; no local change |
+| F1 Oversized MCP SDK transport surface | CONFIRMED | resolved by v2 migration (#15) |
 | F2 Lifecycle-script alerts | CONFIRMED-benign | none (false positives) |
 | F3 Publish posture | CONFIRMED | maintain |
 | F4 Direct dependency surface | CONFIRMED | maintain |
 
-**Actionable in this repository:** 0. **Upstream recommendation:** 1 (F1).
+**Actionable in this repository:** 0. **Upstream recommendation:** 1 (F1) -- superseded 2026-09-21: resolved by the `@modelcontextprotocol/server` 2.0.0 migration (#15).
 
 ## Remediation Plan
 
-No dependency surgery in this repository. The single substantive remediation is the F1 upstream issue to `modelcontextprotocol/typescript-sdk` proposing optional HTTP transport dependencies. F2 alerts are documented as false positives and require no action; re-verify the zero-`hasInstallScript` property after each SDK bump. F3 and F4 are postures to maintain, not defects.
+F1 is remediated: the repository migrated from `@modelcontextprotocol/sdk` 1.30.0 to `@modelcontextprotocol/server` 2.0.0 (#15), dropping the production closure from 95 to 4 packages and removing all HTTP transport packages from the lockfile; the stdio smoke check negotiates protocol 2025-11-25 unchanged. F2 alerts must be re-verified against the new closure: the zero-`hasInstallScript` property held post-migration (4-package closure, no install scripts). F3 and F4 are postures to maintain, not defects.
 
-Next audit trigger: any change to direct dependencies, a `@modelcontextprotocol/sdk` major bump, or a new Socket.dev alert on a package in the lockfile.
+Next audit trigger: any change to direct dependencies, a `@modelcontextprotocol/server` major bump, or a new Socket.dev alert on a package in the lockfile.
