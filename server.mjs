@@ -28,11 +28,11 @@ const questionSpec = z.object({
   ]).optional(),
 });
 
-const inputSchema = {
+const inputSchema = z.object({
   state: z.union([z.record(z.string(), z.unknown()), z.string()]),
   questions: z.record(z.string().min(1), questionSpec),
   timeout_ms: z.number().int().positive().max(60000).optional(),
-};
+});
 
 function buildQuestion(spec) {
   if (spec.type === "choice") {
@@ -50,13 +50,13 @@ function buildQuestion(spec) {
   return noul(spec.instructions, spec.criteria);
 }
 
-const outputSchema = {
+const outputSchema = z.object({
   answers: z.record(z.string(), z.unknown()).optional(),
   model: z.string().optional(),
   usage: z.record(z.string(), z.unknown()).optional(),
   fallback: z.boolean(),
   error: z.string().optional(),
-};
+});
 
 // Lazily-created client, cached for the process lifetime; auth via TYPESAFE_API_KEY.
 let client;
