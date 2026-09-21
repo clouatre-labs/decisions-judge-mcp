@@ -67,10 +67,36 @@ jobs:
 
           echo "Tag ${TAG} verified: signed, annotated, points at main HEAD"
 
-  publish:
-    name: Publish to npm
+  create-release:
+    name: Create Release
     needs: verify-tag-signature
     if: always() && (needs.verify-tag-signature.result == 'success' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub release
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          # Idempotent: skip creation if release already exists; if creation fails with 422
+          # (concurrent race), the final view confirms existence and exits 0.
+          gh release view "${TAG_NAME}" &>/dev/null \
+            || gh release create "${TAG_NAME}" \
+              --title "${TAG_NAME}" \
+              --generate-notes \
+            || gh release view "${TAG_NAME}" &>/dev/null
+
+      - name: Dry run - skip release creation
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: echo "DRY RUN - GitHub release creation skipped"
+
+  publish:
+    name: Publish to npm
+    needs: [verify-tag-signature, create-release]
+    if: always() && needs.verify-tag-signature.result == 'success' && needs.create-release.result == 'success'
     runs-on: ubuntu-24.04-arm
     environment: npm-publish
     permissions:
