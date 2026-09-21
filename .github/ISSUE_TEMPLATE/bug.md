@@ -28,7 +28,7 @@ assignees: ""
 
 ```text
 <!-- paste error output here -->
-```text
+```
 
 ## Logs / Error Output
 
@@ -36,7 +36,7 @@ assignees: ""
 
 ```text
 <!-- log output -->
-```text
+```
 
 ## Environment
 
