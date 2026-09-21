@@ -53,3 +53,9 @@ path = [".gitignore"]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 clouatre-labs contributors"
 SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = [".commitlintrc.yml"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 clouatre-labs contributors"
+SPDX-License-Identifier = "Apache-2.0"
