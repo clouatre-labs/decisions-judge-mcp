@@ -108,7 +108,7 @@ mcp:
 npm ci
 node --check server.mjs
 node scripts/smoke.mjs         # MCP stdio initialize handshake
-node bin/decisions-judge-mcp   # stdio server; needs TYPESAFE_API_KEY to answer
+node server.mjs                # stdio server; needs TYPESAFE_API_KEY to answer
 ```
 
 ## License
