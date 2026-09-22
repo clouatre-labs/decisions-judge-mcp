@@ -113,15 +113,41 @@ function runJudge({ omitApiKey }) {
             }) + "\n",
           );
         } else if (msg.id === 2) {
-          clearTimeout(timer);
-          child.kill("SIGKILL");
-          let payload;
-          try {
-            payload = JSON.parse(msg.result.content[0].text);
-          } catch {
-            reject(new Error("unexpected tool output"));
+          const fail = (err) => {
+            clearTimeout(timer);
+            child.kill("SIGKILL");
+            reject(new Error(err));
+          };
+          if (
+            !msg.result ||
+            typeof msg.result !== "object" ||
+            msg.error !== undefined
+          ) {
+            fail(
+              msg.error
+                ? `tool call failed: ${JSON.stringify(msg.error)}`
+                : "malformed tool response",
+            );
             return;
           }
+          const text = msg.result.content?.[0]?.text;
+          if (typeof text !== "string") {
+            fail("malformed tool response: missing content text");
+            return;
+          }
+          let payload;
+          try {
+            payload = JSON.parse(text);
+          } catch {
+            fail("unexpected tool output");
+            return;
+          }
+          if (typeof payload !== "object" || payload === null) {
+            fail("unexpected tool output: not an object");
+            return;
+          }
+          clearTimeout(timer);
+          child.kill("SIGKILL");
           resolve(payload);
         }
       }
