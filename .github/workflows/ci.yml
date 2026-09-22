@@ -67,6 +67,9 @@ jobs:
       - name: Smoke test judge fallback envelope
         run: node scripts/smoke-judge.mjs
 
+      - name: Smoke test HTTP transport handshake
+        run: node scripts/smoke-http.mjs
+
   lint-docs:
     name: Lint Docs
     runs-on: ubuntu-24.04-arm
