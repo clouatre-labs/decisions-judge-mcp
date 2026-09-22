@@ -6,7 +6,7 @@
 
 **Typed decisions for AI agents, as an MCP tool.** Ask yes/no probability (`noul`), choice among options, or score on ordered levels about any JSON application state. All questions answered in one fast request; failures return a `{fallback: true, error}` envelope instead of blocking, so it is safe to compose into agent workflows.
 
-Currently backed by the [TypeSafe System One](https://typesafe.ai) model (Jev) via [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk), with an opt-in [Cloudflare Workers AI](https://developers.cloudflare.com/ai/models/typesafe/jev/) backend selected once at server startup (`JUDGE_PROVIDER=cloudflare-workers-ai`) for users without a TypeSafe invite. The provider-neutral `judge` primitive maps naturally onto related decision APIs such as [OpenRouter alphadecisions](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request).
+Currently backed by the [TypeSafe System One](https://typesafe.ai) model (Jev) via [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk), with an opt-in [Cloudflare Workers AI](https://developers.cloudflare.com/ai/models/typesafe/jev/) backend for users without a TypeSafe invite — see [Configuration](#configuration) and [Backends](#backends). The provider-neutral `judge` primitive maps naturally onto related decision APIs such as [OpenRouter alphadecisions](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request).
 
 Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clouatre-labs/agentic-coder-skill).
 
@@ -77,6 +77,19 @@ npm i -g decisions-judge-mcp
 > **Tip:** unpinned `npx -y decisions-judge-mcp` always runs the latest published
 > version. For deterministic, supply-chain-hardened setups, pin an exact version
 > or install globally and update deliberately.
+
+## Configuration
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `TYPESAFE_API_KEY` | yes for `typesafe-api` | — | TypeSafe API key, used by the default `typesafe-api` backend |
+| `JUDGE_PROVIDER` | no | `typesafe-api` | Backend selector: `typesafe-api` or `cloudflare-workers-ai`. Read once at server startup; the only way to switch backends |
+| `CLOUDFLARE_API_TOKEN` | only for `cloudflare-workers-ai` | — | Cloudflare token with `Account -> Workers AI -> Edit` permission |
+| `CLOUDFLARE_ACCOUNT_ID` | only for `cloudflare-workers-ai` | — | 32-character hex Cloudflare account id |
+
+Invalid `JUDGE_PROVIDER` values, or `cloudflare-workers-ai` selected with missing
+Cloudflare credentials, fail fast at startup (non-zero exit naming the offending
+variable). See [Backends](#backends) for details and billing notes.
 
 ## MCP client configuration
 
@@ -149,7 +162,7 @@ Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failu
 
 ## Backends
 
-The backend is selected once at server startup via `JUDGE_PROVIDER`. Valid values: `typesafe-api` (default) and `cloudflare-workers-ai`. Selection is explicit only: setting the Cloudflare credential env vars never switches backends on its own, and the judge tool's schema, description, and the server instructions are identical under both backends.
+The backend is selected once at server startup via [`JUDGE_PROVIDER`](#configuration). Valid values: `typesafe-api` (default) and `cloudflare-workers-ai`. Selection is explicit only: setting the Cloudflare credential env vars never switches backends on its own, and the judge tool's schema, description, and the server instructions are identical under both backends.
 
 - `typesafe-api` (default): unchanged behavior. Uses `TYPESAFE_API_KEY` and `@typesafe-ai/sdk` exactly as before; existing callers see no difference.
 - `cloudflare-workers-ai`: routes the same Jev model through Cloudflare Workers AI. Requires `CLOUDFLARE_API_TOKEN` (needs `Account -> Workers AI -> Edit`) and `CLOUDFLARE_ACCOUNT_ID` (32-character hex).
