@@ -294,9 +294,14 @@ if (transportName === "http") {
       if (response.body) {
         await ReadableStream.from(response.body).pipeTo(
           new WritableStream({
-            write: (chunk) => res.write(chunk),
+            // Await the write callback so Node backpressure is honored.
+            write: (chunk) => new Promise((resolve) => res.write(chunk, resolve)),
           }),
         );
+        // response.body ending means the MCP response is complete; close the
+        // Node response so JSON clients are not left waiting. SSE streams end
+        // here too, once the handler closes its body.
+        res.end();
       } else {
         res.end();
       }
