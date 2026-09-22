@@ -9,7 +9,7 @@ decisions-judge-mcp is an MCP stdio server (Node >= 20, ESM, single `server.mjs`
 npm on Node 24; MCP SDK + zod for schema validation.
 
 ```sh
-# test:   node --check server.mjs && node scripts/smoke.mjs && node scripts/smoke-judge.mjs
+# test:   node --check server.mjs && node scripts/smoke.mjs && node scripts/smoke-judge.mjs && node scripts/smoke-http.mjs
 # lint:   npx markdownlint-cli2 "**/*.md"
 # format: npx markdownlint-cli2 --fix "**/*.md"
 ```
