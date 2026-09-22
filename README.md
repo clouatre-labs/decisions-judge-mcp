@@ -26,6 +26,14 @@ Add to `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claud
 
 Then ask your agent anything answerable with a judgment — it can call the `judge` tool.
 
+## Demo
+
+![judge demo](docs/demo.gif)
+
+Judge returns typed answers your code can branch on — and a guaranteed fallback envelope when the model is unreachable.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to regenerate the demo.
+
 ## Example
 
 ```jsonc

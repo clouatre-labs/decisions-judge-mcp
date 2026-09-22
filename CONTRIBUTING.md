@@ -5,6 +5,10 @@
 - Tools: git, [gh](https://cli.github.com/), GPG (commit signing), SSH with a key registered on GitHub.
 - Authenticate: `gh auth login`; verify with `ssh -T git@github.com && gh auth status`.
 
+## Demo GIF
+
+The README demo is generated from `docs/demo.tape` with [vhs](https://github.com/charmbracelet/vhs), which drives `scripts/demo.mjs`; commit the regenerated `docs/demo.gif`. Note: vhs v0.12.0 is affected by [charmbracelet/vhs#787](https://github.com/charmbracelet/vhs/issues/787) (exits without writing output), so use a build from the fix PR until a patched release. Rendering is offline by default; set `DEMO_LIVE=1` (plus `TYPESAFE_API_KEY`) for a live first scene.
+
 ## Commit conventions
 
 All commits must follow [Conventional Commits](https://www.conventionalcommits.org/):
