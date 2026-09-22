@@ -6,7 +6,7 @@
 
 **Typed decisions for AI agents, as an MCP tool.** Ask yes/no probability (`noul`), choice among options, or score on ordered levels about any JSON application state. All questions answered in one fast request; failures return a `{fallback: true, error}` envelope instead of blocking, so it is safe to compose into agent workflows.
 
-Currently backed by the [TypeSafe System One](https://typesafe.ai) model (Jev) via [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk). The provider-neutral `judge` primitive maps naturally onto related decision APIs such as [OpenRouter alphadecisions](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request).
+Currently backed by the [TypeSafe System One](https://typesafe.ai) model (Jev) via [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk), with an opt-in [Cloudflare Workers AI](https://developers.cloudflare.com/ai/models/typesafe/jev/) provider (`provider: "cloudflare"`) for users without a TypeSafe invite. The provider-neutral `judge` primitive maps naturally onto related decision APIs such as [OpenRouter alphadecisions](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request).
 
 Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clouatre-labs/agentic-coder-skill).
 
@@ -133,7 +133,8 @@ mcp:
 | `state` | object \| string \| array | JSON application state to judge |
 | `questions` | map | name → question spec (see below) |
 | `timeout_ms` | number, optional | max 60000 |
-| `model` | string, optional | override the resolved model (e.g. `jev-latest`) |
+| `model` | string, optional | override the resolved model (e.g. `jev-latest`; `typesafe/jev` on the Cloudflare path) |
+| `provider` | `"typesafe" \| "cloudflare"`, optional | defaults to `"typesafe"`; explicit selection only, never inferred from environment variables |
 
 Instructions and criteria values accept either plain strings or arbitrary JSON
 structure (objects/arrays). In-flight requests are cancelled when the client
@@ -146,6 +147,21 @@ disconnects.
 | `score` | ordered array of level descriptions | best matching level |
 
 Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failure.
+
+## Providers
+
+The default provider (`typesafe`) is unchanged: it uses `TYPESAFE_API_KEY` and `@typesafe-ai/sdk` exactly as before, and existing callers see no difference.
+
+The opt-in `cloudflare` provider routes the same Jev model through Cloudflare Workers AI, for users who cannot get a TypeSafe invite. Set both `CLOUDFLARE_API_TOKEN` (needs `Account -> Workers AI -> Edit`) and `CLOUDFLARE_ACCOUNT_ID`, then pass `provider: "cloudflare"` on a judge call. Provider selection is explicit only: setting the Cloudflare env vars never switches providers on its own, and a half-set configuration returns the fallback envelope naming the missing variable instead of guessing.
+
+| Channel | Endpoint | Model id | Auth env vars | Price (input tokens) | Notes |
+| --- | --- | --- | --- | --- | --- |
+| TypeSafe direct (default) | `POST api.typesafe.ai/v1/systemone` | `jev-latest` | `TYPESAFE_API_KEY` | $0.042/M | Invite-only, gated |
+| Cloudflare Workers AI | `POST api.cloudflare.com/client/v4/accounts/{account_id}/ai/run` | `typesafe/jev` | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | passes through Cloudflare AI [pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/) | Question schema identical to TypeSafe; official docs; no invite gate |
+| Vercel AI Gateway | `POST ai-gateway.vercel.sh/v1/evaluate` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` | $5/mo free credit; card on file required | Renames `noul` to `boolean` (400 otherwise); experimental API |
+| OpenRouter (follow-up) | `POST openrouter.ai/api/v1/api/alpha/decisions` | `typesafe/jev-1.13` | `OPENROUTER_API_KEY` | $0.042/M | Alpha contract; routes to TypeSafe |
+
+Billing gotcha: `typesafe/jev` is a partner model on Cloudflare, so runs are metered from the **AI Gateway prepaid credit balance**, not the account's payment card, regardless of the gateway's billing setting or whether a gateway is used. Accounts with a valid card but zero credit balance get HTTP 402 (error 2021, "Insufficient balance"); top up AI Gateway prepaid credit before calling.
 
 ## Development
 
