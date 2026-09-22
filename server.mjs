@@ -49,17 +49,27 @@ const inputSchema = z.object({
   provider: z.enum(["typesafe", "cloudflare"]).default("typesafe"),
 });
 
-function buildQuestion(spec) {
+// Criteria checks shared by both provider paths. Runs before any provider
+// call so malformed questions return the documented fallback error (never an
+// API request). Does not couple to the SDK builders.
+function validateQuestionSpec(spec) {
   if (spec.type === "choice") {
     if (!spec.criteria || Array.isArray(spec.criteria) || typeof spec.criteria !== "object") {
       throw new Error(`choice question requires criteria as an object of {option: description}`);
     }
-    return choice(spec.instructions, spec.criteria);
-  }
-  if (spec.type === "score") {
+  } else if (spec.type === "score") {
     if (!Array.isArray(spec.criteria) || spec.criteria.length < 2) {
       throw new Error(`score question requires criteria as an ordered array of at least two level descriptions`);
     }
+  }
+}
+
+function buildQuestion(spec) {
+  validateQuestionSpec(spec);
+  if (spec.type === "choice") {
+    return choice(spec.instructions, spec.criteria);
+  }
+  if (spec.type === "score") {
     return score(spec.instructions, spec.criteria);
   }
   return noul(spec.instructions, spec.criteria);
@@ -97,6 +107,10 @@ function cfErrorEnvelopeMessage(body) {
   return null;
 }
 
+// Cloudflare account ids are 32 hex chars; reject anything else (empty,
+// whitespace, path-unsafe characters) before URL interpolation.
+const CF_ACCOUNT_ID_RE = /^[a-f0-9]{32}$/i;
+
 async function cloudflareJudge({ state, questions, model, timeout_ms, signal }) {
   const token = process.env.CLOUDFLARE_API_TOKEN;
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -105,6 +119,9 @@ async function cloudflareJudge({ state, questions, model, timeout_ms, signal }) 
   }
   if (!accountId) {
     throw new Error("cloudflare provider requires CLOUDFLARE_ACCOUNT_ID in the environment");
+  }
+  if (!CF_ACCOUNT_ID_RE.test(accountId)) {
+    throw new Error("cloudflare provider requires CLOUDFLARE_ACCOUNT_ID to be a 32-character hex account id");
   }
 
   const controller = new AbortController();
@@ -117,6 +134,7 @@ async function cloudflareJudge({ state, questions, model, timeout_ms, signal }) 
     ? setTimeout(() => controller.abort(), timeout_ms)
     : undefined;
   try {
+    if (controller.signal.aborted) throw new Error("request aborted");
     const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run`;
     const body = JSON.stringify({
       model: model ?? "typesafe/jev",
@@ -125,6 +143,7 @@ async function cloudflareJudge({ state, questions, model, timeout_ms, signal }) 
     let lastErr = null;
     for (let attempt = 0; attempt <= CF_RETRY_LIMIT; attempt++) {
       if (attempt > 0) {
+        if (controller.signal.aborted) throw new Error("request aborted");
         await new Promise((resolve, reject) => {
           const t = setTimeout(resolve, CF_BACKOFF_MS * attempt);
           controller.signal.addEventListener(
@@ -136,6 +155,7 @@ async function cloudflareJudge({ state, questions, model, timeout_ms, signal }) 
             { once: true },
           );
         });
+        if (controller.signal.aborted) throw new Error("request aborted");
       }
       let res;
       try {
@@ -154,6 +174,12 @@ async function cloudflareJudge({ state, questions, model, timeout_ms, signal }) 
         continue;
       }
       if (res.status === 429 && attempt < CF_RETRY_LIMIT) {
+        // Consume/cancel the 429 body before backing off.
+        try {
+          await res.arrayBuffer();
+        } catch {
+          res.body?.cancel().catch(() => {});
+        }
         lastErr = new Error("cloudflare rate limited");
         lastErr.status = res.status;
         continue;
@@ -228,9 +254,22 @@ server.registerTool(
     },
   },
   async ({ state, questions, timeout_ms, model, provider }, ctx) => {
-    // Opt-in Cloudflare branch: raw validated specs, before buildQuestion (the
-    // SDK builders are only needed on the typesafe path).
+    // Opt-in Cloudflare branch: validate question criteria BEFORE any provider
+    // call or env check so malformed questions return the same documented
+    // fallback error as the typesafe path, never an API request.
     if (provider === "cloudflare") {
+      try {
+        for (const spec of Object.values(questions)) validateQuestionSpec(spec);
+      } catch (err) {
+        const payload = {
+          fallback: true,
+          error: err && err.message ? err.message : "question construction failed",
+        };
+        return {
+          structuredContent: payload,
+          content: [{ type: "text", text: JSON.stringify(payload) }],
+        };
+      }
       try {
         const payload = await cloudflareJudge({
           state,

@@ -175,18 +175,148 @@ proc.stdout.on("data", (chunk) => {
         fail(`expected missing-env-var error naming CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID, got: ${text4.slice(0, 200)}`);
       }
       console.log(`smoke-judge: OK (cloudflare offline fallback: ${payload4.error})`);
-      done = true;
-      proc.kill("SIGKILL");
-      const liveToken = process.env.CLOUDFLARE_API_TOKEN;
-      const liveAccount = process.env.CLOUDFLARE_ACCOUNT_ID;
-      if (!liveToken || !liveAccount) {
-        console.log("smoke-judge: SKIP (live cloudflare happy path: CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID not both set)");
-        process.exit(0);
+      // Arrange: cloudflare provider with a malformed choice question (no
+      // criteria). Must return the same documented criteria fallback error as
+      // the typesafe path BEFORE any API call or credential check.
+      send({
+        jsonrpc: "2.0",
+        id: 6,
+        method: "tools/call",
+        params: {
+          name: "judge",
+          arguments: {
+            provider: "cloudflare",
+            state: {},
+            questions: {
+              q: { type: "choice", instructions: "pick one" },
+            },
+          },
+        },
+      });
+      timer = setTimeout(
+        () => fail(`no response within ${TIMEOUT_MS}ms`),
+        TIMEOUT_MS,
+      );
+    } else if (msg.id === 6) {
+      clearTimeout(timer);
+      const text6 = msg.result?.content?.[0]?.text;
+      if (!text6) {
+        fail(`tools/call result missing content: ${JSON.stringify(msg).slice(0, 300)}`);
       }
-      runLiveCase(liveToken, liveAccount);
+      let payload6;
+      try {
+        payload6 = JSON.parse(text6);
+      } catch {
+        fail(`content is not a JSON payload: ${String(text6).slice(0, 200)}`);
+      }
+      if (payload6.fallback !== true || !payload6.error || !/criteria/i.test(payload6.error)) {
+        fail(`expected criteria fallback error on cloudflare path, got: ${text6.slice(0, 200)}`);
+      }
+      console.log(`smoke-judge: OK (cloudflare malformed question fallback: ${payload6.error})`);
+      runInvalidAccountCase();
     }
   }
 });
+
+// Edge case: CLOUDFLARE_ACCOUNT_ID set to a path-unsafe value (whitespace).
+// The server must reject the format before URL interpolation and return a
+// fallback envelope naming CLOUDFLARE_ACCOUNT_ID -- never a request.
+function runInvalidAccountCase() {
+  const badEnv = { ...process.env };
+  badEnv.CLOUDFLARE_API_TOKEN = "dummy-token";
+  badEnv.CLOUDFLARE_ACCOUNT_ID = "bad account id";
+  const bad = spawn(process.execPath, ["server.mjs"], {
+    stdio: ["pipe", "pipe", "inherit"],
+    env: badEnv,
+  });
+  let badBuffer = "";
+  let badDone = false;
+  const badFail = (msg) => {
+    console.error(`smoke-judge: FAIL: ${msg}`);
+    bad.kill("SIGKILL");
+    process.exit(1);
+  };
+  const badSend = (msg) => bad.stdin.write(JSON.stringify(msg) + "\n");
+  const badTimer = setTimeout(
+    () => badFail(`no bad-account response within ${TIMEOUT_MS}ms`),
+    TIMEOUT_MS,
+  );
+  bad.stdout.on("data", (chunk) => {
+    badBuffer += chunk;
+    const lines = badBuffer.split("\n");
+    badBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let msg;
+      try {
+        msg = JSON.parse(line);
+      } catch {
+        badFail(`non-JSON output on bad-account stdout: ${line.slice(0, 200)}`);
+      }
+      if (msg.id === 1) {
+        if (!msg.result || !msg.result.protocolVersion) {
+          badFail(`bad-account initialize failed: ${JSON.stringify(msg).slice(0, 300)}`);
+        }
+        badSend({
+          jsonrpc: "2.0",
+          id: 7,
+          method: "tools/call",
+          params: {
+            name: "judge",
+            arguments: {
+              provider: "cloudflare",
+              state: {},
+              questions: {
+                is_bug: { type: "noul", instructions: "Is this a defect?" },
+              },
+            },
+          },
+        });
+      } else if (msg.id === 7) {
+        clearTimeout(badTimer);
+        const text7 = msg.result?.content?.[0]?.text;
+        if (!text7) {
+          badFail(`tools/call result missing content: ${JSON.stringify(msg).slice(0, 300)}`);
+        }
+        let payload7;
+        try {
+          payload7 = JSON.parse(text7);
+        } catch {
+          badFail(`content is not a JSON payload: ${String(text7).slice(0, 200)}`);
+        }
+        if (payload7.fallback !== true || !payload7.error || !/CLOUDFLARE_ACCOUNT_ID/.test(payload7.error)) {
+          badFail(`expected fallback naming CLOUDFLARE_ACCOUNT_ID, got: ${text7.slice(0, 200)}`);
+        }
+        console.log(`smoke-judge: OK (invalid CLOUDFLARE_ACCOUNT_ID fallback: ${payload7.error})`);
+        done = true;
+        badDone = true;
+        bad.kill("SIGKILL");
+        proc.kill("SIGKILL");
+        const liveToken = process.env.CLOUDFLARE_API_TOKEN;
+        const liveAccount = process.env.CLOUDFLARE_ACCOUNT_ID;
+        if (!liveToken || !liveAccount) {
+          console.log("smoke-judge: SKIP (live cloudflare happy path: CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID not both set)");
+          process.exit(0);
+        }
+        runLiveCase(liveToken, liveAccount);
+      }
+    }
+  });
+  bad.on("error", (err) => badFail(`failed to spawn bad-account server: ${err.message}`));
+  bad.on("exit", (code) => {
+    if (!badDone) badFail(`bad-account server exited early with code ${code}`);
+  });
+  badSend({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-11-25",
+      capabilities: {},
+      clientInfo: { name: "smoke-judge-test", version: "0.0.0" },
+    },
+  });
+}
 
 function runLiveCase(token, account) {
   const childEnvLive = { ...process.env };
