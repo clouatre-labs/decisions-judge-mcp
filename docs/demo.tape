@@ -5,5 +5,6 @@ Set Height 600
 Set FontFamily "Cascadia Code NF"
 Set Theme "Catppuccin Mocha"
 Type "env -u DEMO_LIVE node scripts/demo.mjs"
+Sleep 1s
 Enter
-Sleep 6s
+Sleep 7s
