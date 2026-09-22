@@ -6,8 +6,10 @@
 // request and returns the raw typed answers plus model/usage metadata.
 // Instructions and criteria values accept strings or arbitrary JSON structure
 // (EntryType); an optional model override is honored. Client disconnects abort
-// the in-flight request. Retries, timeouts, and model resolution (jev-latest)
-// are owned by @typesafe-ai/sdk.
+// the in-flight request. Question specs are validated before any provider
+// call, and {state, questions} payloads exceeding 256 KiB are rejected, both
+// via the shared checks in providers/typesafe-api.mjs. Retries, timeouts, and
+// model resolution (jev-latest) are owned by @typesafe-ai/sdk.
 //
 // Auth: TYPESAFE_API_KEY (SDK standard).
 //
@@ -19,7 +21,13 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import { cloudflareJudge } from "./providers/cloudflare-workers-ai.mjs";
-import { envelope, fallbackEnvelope, typesafeJudge } from "./providers/typesafe-api.mjs";
+import {
+  envelope,
+  fallbackEnvelope,
+  fallbackFrom,
+  typesafeJudge,
+  validateQuestionSpec,
+} from "./providers/typesafe-api.mjs";
 
 // Startup provider selection: JUDGE_PROVIDER is read exactly once, at server
 // startup. Explicit selection only -- the provider is never inferred from
@@ -76,21 +84,6 @@ const inputSchema = z.object({
   model: z.string().min(1).optional(),
 });
 
-// Criteria checks shared by both provider paths. Runs before any provider
-// call so malformed questions return the documented fallback error (never an
-// API request).
-function validateQuestionSpec(spec) {
-  if (spec.type === "choice") {
-    if (!spec.criteria || Array.isArray(spec.criteria) || typeof spec.criteria !== "object") {
-      throw new Error(`choice question requires criteria as an object of {option: description}`);
-    }
-  } else if (spec.type === "score") {
-    if (!Array.isArray(spec.criteria) || spec.criteria.length < 2) {
-      throw new Error(`score question requires criteria as an ordered array of at least two level descriptions`);
-    }
-  }
-}
-
 const outputSchema = z.object({
   answers: z.record(z.string(), z.unknown()).optional(),
   model: z.string().optional(),
@@ -109,35 +102,61 @@ const server = new McpServer(
   },
 );
 
-// Cloudflare path: validate the question specs before any provider call, then
-// hand off to the provider. Every error lands in the fallback envelope.
-async function cloudflareHandler({ state, questions, timeout_ms, model }, ctx) {
+// Deep copy of a JSON-like value keeping only own enumerable keys except
+// "__proto__" (prototype-pollution guard). Strings pass through; arrays and
+// plain objects are rebuilt recursively.
+function stripProtoKeys(value) {
+  if (Array.isArray(value)) return value.map(stripProtoKeys);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const key of Object.keys(value)) {
+      if (key !== "__proto__") out[key] = stripProtoKeys(value[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+// Payload size cap: {state, questions} serialized must stay within 256 KiB.
+const MAX_PAYLOAD_BYTES = 262144;
+
+// Provider dispatch: sanitize inputs, enforce the payload cap, then hand off.
+// Every error lands in the fallback envelope.
+async function judgeHandler({ state, questions, timeout_ms, model }, ctx) {
+  const cleanState = stripProtoKeys(state);
+  const cleanQuestions = stripProtoKeys(questions);
   try {
-    for (const spec of Object.values(questions)) validateQuestionSpec(spec);
+    for (const spec of Object.values(cleanQuestions)) validateQuestionSpec(spec);
   } catch (err) {
     return fallbackEnvelope(
       err && err.message ? err.message : "question construction failed",
     );
   }
-  try {
-    const payload = await cloudflareJudge({
-      state,
-      questions,
-      model,
-      timeout_ms,
-      signal: ctx?.signal,
-    });
-    return envelope(payload);
-  } catch (err) {
-    const message = err && err.message ? err.message : "cloudflare request failed";
-    return fallbackEnvelope(
-      typeof err?.status === "number" ? `${message} (HTTP ${err.status})` : message,
-    );
+  // Serialize once and measure UTF-8 bytes (Buffer.byteLength), not UTF-16
+  // code units, so non-ASCII payloads cannot slip past the cap.
+  const serialized = JSON.stringify({ state: cleanState, questions: cleanQuestions });
+  if (Buffer.byteLength(serialized, "utf8") > MAX_PAYLOAD_BYTES) {
+    return fallbackEnvelope("payload exceeds 256 KiB limit");
   }
+  const dispatch =
+    provider === "cloudflare-workers-ai"
+      ? async (args, c) => {
+          try {
+            const payload = await cloudflareJudge({
+              state: args.state,
+              questions: args.questions,
+              model: args.model,
+              timeout_ms: args.timeout_ms,
+              signal: c?.signal,
+            });
+            return envelope(payload);
+          } catch (err) {
+            return fallbackFrom(err, "cloudflare request failed");
+          }
+        }
+      : typesafeJudge;
+  return dispatch({ state: cleanState, questions: cleanQuestions, timeout_ms, model }, ctx);
 }
-
-const judgeHandler =
-  provider === "cloudflare-workers-ai" ? cloudflareHandler : typesafeJudge;
 
 server.registerTool(
   "judge",

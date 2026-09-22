@@ -42,12 +42,7 @@ function cfErrorEnvelopeMessage(body, redact) {
     if (Array.isArray(body?.errors) && body.errors.length > 0) {
       const messages = body.errors
         .map((e) => {
-          const raw =
-            e && typeof e === "object" && typeof e.message === "string"
-              ? e.message
-              : e && typeof e === "object" && e.message != null
-                ? String(e.message)
-                : String(e);
+          const raw = e && typeof e === "object" && e.message != null ? String(e.message) : String(e);
           return redact(raw);
         })
         .filter(Boolean);
@@ -100,18 +95,21 @@ export async function cloudflareJudge({ state, questions, model, timeout_ms, sig
     let lastErr = null;
     for (let attempt = 0; attempt <= CF_RETRY_LIMIT; attempt++) {
       if (attempt > 0) {
-        if (controller.signal.aborted) throw new Error("request aborted");
-        await new Promise((resolve, reject) => {
-          const t = setTimeout(resolve, CF_BACKOFF_MS * attempt);
-          controller.signal.addEventListener(
-            "abort",
-            () => {
-              clearTimeout(t);
-              reject(new Error("request aborted"));
-            },
-            { once: true },
-          );
-        });
+        let t;
+        let rejectAbort;
+        const onBackoffAbort = () => {
+          clearTimeout(t);
+          rejectAbort?.(new Error("request aborted"));
+        };
+        try {
+          await new Promise((resolve, reject) => {
+            rejectAbort = reject;
+            t = setTimeout(resolve, CF_BACKOFF_MS * attempt);
+            controller.signal.addEventListener("abort", onBackoffAbort, { once: true });
+          });
+        } finally {
+          controller.signal.removeEventListener("abort", onBackoffAbort);
+        }
         if (controller.signal.aborted) throw new Error("request aborted");
       }
       let res;
