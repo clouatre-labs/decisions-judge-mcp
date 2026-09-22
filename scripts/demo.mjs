@@ -170,5 +170,12 @@ if (outage.fallback !== true) {
   console.error("outage scene failed: expected fallback envelope");
   process.exit(1);
 }
+if (typeof outage.error !== "string") {
+  console.error(
+    "outage scene failed: expected error field to be a string, got: " +
+      JSON.stringify(outage.error),
+  );
+  process.exit(1);
+}
 pretty("judge: fallback envelope (no API key)", outage);
 console.log("\ndone.");
