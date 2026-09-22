@@ -21,17 +21,35 @@ export function fallbackEnvelope(error) {
   return envelope({ fallback: true, error });
 }
 
-function buildQuestion(spec) {
+// Build a fallback envelope from a thrown value: prefer err.message, else the
+// default message; append " (HTTP N)" when err.status is a number.
+export function fallbackFrom(err, defaultMessage) {
+  let message = err && err.message ? err.message : defaultMessage;
+  if (err && typeof err.status === "number") message = `${message} (HTTP ${err.status})`;
+  return fallbackEnvelope(message);
+}
+
+// Criteria checks shared by both provider paths. Runs before any question
+// construction so malformed questions return the documented fallback error
+// (never an API request).
+export function validateQuestionSpec(spec) {
   if (spec.type === "choice") {
     if (!spec.criteria || Array.isArray(spec.criteria) || typeof spec.criteria !== "object") {
       throw new Error(`choice question requires criteria as an object of {option: description}`);
     }
-    return choice(spec.instructions, spec.criteria);
-  }
-  if (spec.type === "score") {
+  } else if (spec.type === "score") {
     if (!Array.isArray(spec.criteria) || spec.criteria.length < 2) {
       throw new Error(`score question requires criteria as an ordered array of at least two level descriptions`);
     }
+  }
+}
+
+function buildQuestion(spec) {
+  validateQuestionSpec(spec);
+  if (spec.type === "choice") {
+    return choice(spec.instructions, spec.criteria);
+  }
+  if (spec.type === "score") {
     return score(spec.instructions, spec.criteria);
   }
   return noul(spec.instructions, spec.criteria);
@@ -43,8 +61,8 @@ function getClient() {
   return (client ??= new TypeSafeClient({ logLevel: "off" }));
 }
 
-// Typesafe path (default): buildQuestion applies the same criteria checks as
-// validateQuestionSpec and constructs the SDK question objects.
+// Typesafe path (default): validateQuestionSpec (via buildQuestion) guards the
+// question specs, then the SDK question objects are constructed.
 export async function typesafeJudge({ state, questions, timeout_ms, model }, ctx) {
   let qmap;
   try {
@@ -52,18 +70,12 @@ export async function typesafeJudge({ state, questions, timeout_ms, model }, ctx
       Object.entries(questions).map(([name, spec]) => [name, buildQuestion(spec)]),
     );
   } catch (err) {
-    return fallbackEnvelope(
-      err && err.message ? err.message : "question construction failed",
-    );
+    return fallbackFrom(err, "question construction failed");
   }
   try {
     const request = { state, questions: qmap };
     if (model) request.model = model;
-    const options = timeout_ms
-      ? { timeout: timeout_ms, signal: ctx?.signal }
-      : ctx?.signal
-        ? { signal: ctx.signal }
-        : undefined;
+    const options = (timeout_ms || ctx?.signal) ? { timeout: timeout_ms, signal: ctx?.signal } : undefined;
     const result = await getClient().systemOne(request, options);
     return envelope({
       answers: result.answers,
@@ -72,9 +84,6 @@ export async function typesafeJudge({ state, questions, timeout_ms, model }, ctx
       fallback: false,
     });
   } catch (err) {
-    const message = err && err.message ? err.message : "typesafe request failed";
-    return fallbackEnvelope(
-      typeof err?.status === "number" ? `${message} (HTTP ${err.status})` : message,
-    );
+    return fallbackFrom(err, "typesafe request failed");
   }
 }
