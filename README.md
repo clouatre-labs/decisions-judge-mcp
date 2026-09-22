@@ -4,18 +4,27 @@
 [![npm version](https://img.shields.io/npm/v/decisions-judge-mcp.svg)](https://www.npmjs.com/package/decisions-judge-mcp)
 [![REUSE status](https://api.reuse.software/badge/github.com/clouatre-labs/decisions-judge-mcp)](https://api.reuse.software/info/github.com/clouatre-labs/decisions-judge-mcp)
 
-**Typed decisions for AI agents, as an MCP tool.** Ask yes/no probability (`noul`), choice among options, or score on ordered levels about any JSON application state. All questions answered in one fast request; failures return a `{fallback: true, error}` envelope instead of blocking, so it is safe to compose into agent workflows.
+**Typed decisions for AI agents, as an MCP tool.** Ask yes/no probability (`noul`), choice among options, or score on ordered levels about any JSON application state — all questions answered in one fast request.
 
-Currently backed by the [TypeSafe System One](https://typesafe.ai) model (Jev) via [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk), with an opt-in [Cloudflare Workers AI](https://developers.cloudflare.com/ai/models/typesafe/jev/) provider for users without a TypeSafe invite — see [Configuration](#configuration) and [Providers](#providers).
+Backed by the [TypeSafe System One](https://typesafe.ai) model (Jev) via [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk), with an opt-in [Cloudflare Workers AI](https://developers.cloudflare.com/ai/models/typesafe/jev/) provider — see [Providers](#providers).
 
-Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clouatre-labs/agentic-coder-skill).
+## Get started
 
-## Why
+Add to `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`) — the same JSON shape works for codex, goose, and pi:
 
-- **Programmable common sense**: judgment as a primitive your code can branch on, not a prompt-and-parse loop
-- **Typed answers**: probabilities, options, and ordered levels, validated by schema
-- **One request, many questions**: batch an entire decision tree in a single call
-- **Never blocks**: fallback envelope on any failure keeps agents running
+```json
+{
+  "mcpServers": {
+    "decisions-judge": {
+      "command": "npx",
+      "args": ["-y", "decisions-judge-mcp"],
+      "env": { "TYPESAFE_API_KEY": "your-key-here" }
+    }
+  }
+}
+```
+
+Then ask your agent anything answerable with a judgment — it can call the `judge` tool.
 
 ## Example
 
@@ -64,50 +73,26 @@ Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clou
 Requires Node >= 20 and `TYPESAFE_API_KEY` in the environment.
 
 ```sh
-# run on demand via npx (no global install)
-npx -y decisions-judge-mcp
-
-# or pin a version for supply-chain reproducibility
-npx -y decisions-judge-mcp@1.0.2
-
-# or install globally
-npm i -g decisions-judge-mcp
+npx -y decisions-judge-mcp          # latest
+npx -y decisions-judge-mcp@1.3.0    # pinned, for supply-chain reproducibility
 ```
-
-> **Tip:** unpinned `npx -y decisions-judge-mcp` always runs the latest published
-> version. For deterministic, supply-chain-hardened setups, pin an exact version
-> or install globally and update deliberately.
 
 ## Configuration
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `TYPESAFE_API_KEY` | yes for `typesafe-api` | — | TypeSafe API key, used by the default `typesafe-api` provider |
-| `JUDGE_PROVIDER` | no | `typesafe-api` | Provider selector: `typesafe-api` or `cloudflare-workers-ai`. Read once at server startup; the only way to switch providers |
+| `JUDGE_PROVIDER` | no | `typesafe-api` | Provider selector: `typesafe-api` or `cloudflare-workers-ai`. Read once at startup |
 | `CLOUDFLARE_API_TOKEN` | only for `cloudflare-workers-ai` | — | Cloudflare token with `Account -> Workers AI -> Edit` permission |
 | `CLOUDFLARE_ACCOUNT_ID` | only for `cloudflare-workers-ai` | — | 32-character hex Cloudflare account id |
 
 Invalid `JUDGE_PROVIDER` values, or `cloudflare-workers-ai` selected with missing
 Cloudflare credentials, fail fast at startup (non-zero exit naming the offending
-variable). See [Providers](#providers) for details and billing notes.
+variable).
 
 ## MCP client configuration
 
 All examples use `npx -y`, the standard pattern for Node-based MCP servers. Swap in `decisions-judge-mcp@<version>` in the `args` if you prefer pinning.
-
-**pi** (`~/.config/pi/mcp.json` or equivalent):
-
-```json
-{
-  "mcpServers": {
-    "decisions-judge": {
-      "command": "npx",
-      "args": ["-y", "decisions-judge-mcp"],
-      "env": { "TYPESAFE_API_KEY": "..." }
-    }
-  }
-}
-```
 
 **Claude Code** (one command):
 
@@ -130,14 +115,21 @@ mcp:
         TYPESAFE_API_KEY: "..."
 ```
 
-**Windows note:** some clients need `cmd /c npx` on Windows:
+**pi** (`~/.config/pi/mcp.json` or equivalent):
 
 ```json
 {
-  "command": "cmd",
-  "args": ["/c", "npx", "-y", "decisions-judge-mcp"]
+  "mcpServers": {
+    "decisions-judge": {
+      "command": "npx",
+      "args": ["-y", "decisions-judge-mcp"],
+      "env": { "TYPESAFE_API_KEY": "..." }
+    }
+  }
 }
 ```
+
+**Windows note:** some clients need `cmd /c npx` — use `"command": "cmd"` with `"args": ["/c", "npx", "-y", "decisions-judge-mcp"]`.
 
 ## Tool reference: `judge`
 
@@ -158,18 +150,16 @@ disconnects.
 | `choice` | `{option: description\|null}` | winning option name |
 | `score` | ordered array of level descriptions | best matching level |
 
-Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failure.
+Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failure — failures never block agent workflows.
 
 ## Providers
 
-The provider is selected once at server startup via [`JUDGE_PROVIDER`](#configuration). Valid values: `typesafe-api` (default) and `cloudflare-workers-ai`. Selection is explicit only: setting the Cloudflare credential env vars never switches providers on its own, and the judge tool's schema, description, and the server instructions are identical under both providers.
+Selected once at startup via `JUDGE_PROVIDER` (default `typesafe-api`). The judge tool's schema and behavior are identical under both providers.
 
-- `typesafe-api` (default): unchanged behavior. Uses `TYPESAFE_API_KEY` and `@typesafe-ai/sdk` exactly as before; existing callers see no difference.
-- `cloudflare-workers-ai`: routes the same Jev model through Cloudflare Workers AI. Requires `CLOUDFLARE_API_TOKEN` (needs `Account -> Workers AI -> Edit`) and `CLOUDFLARE_ACCOUNT_ID` (32-character hex).
+- `typesafe-api` (default): uses `TYPESAFE_API_KEY` via `@typesafe-ai/sdk`.
+- `cloudflare-workers-ai`: routes the same Jev model through Cloudflare Workers AI; requires the two Cloudflare variables above.
 
-Startup failures are fatal by design. If `JUDGE_PROVIDER` is set to an unknown value, or `cloudflare-workers-ai` is selected with `CLOUDFLARE_API_TOKEN` unset or `CLOUDFLARE_ACCOUNT_ID` not a 32-character hex id, the server exits non-zero naming the offending variable instead of starting in a degraded state.
-
-Billing gotcha: `typesafe/jev` is a partner model on Cloudflare, so runs are metered from the **AI Gateway prepaid credit balance**, not the account's payment card, regardless of the gateway's billing setting or whether a gateway is used. Accounts with a valid card but zero credit balance get HTTP 402 (error 2021, "Insufficient balance"); top up AI Gateway prepaid credit before calling.
+Billing gotcha: `typesafe/jev` is a partner model on Cloudflare, so runs are metered from the **AI Gateway prepaid credit balance**, not the account's payment card. Accounts with a valid card but zero credit balance get HTTP 402 (error 2021, "Insufficient balance"); top up AI Gateway prepaid credit before calling.
 
 ## Development
 
@@ -180,6 +170,8 @@ node scripts/smoke.mjs         # MCP stdio initialize handshake
 node scripts/smoke-judge.mjs   # judge fallback envelope (no API key needed)
 node server.mjs                # stdio server; needs TYPESAFE_API_KEY to answer
 ```
+
+Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clouatre-labs/agentic-coder-skill).
 
 ## License
 
