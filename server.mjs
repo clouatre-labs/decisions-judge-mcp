@@ -221,6 +221,9 @@ if (transportName === "http") {
   // from the factory (equivalent to the sessionIdGenerator: undefined idiom)
   // and answers GET/DELETE on the endpoint with 405 per the 2026-07-28 spec.
   const handler = createMcpHandler(() => buildServer());
+  // Raw request-body cap: rejects oversized or never-ending POSTs before
+  // JSON parsing. Slack above MAX_PAYLOAD_BYTES covers the JSON-RPC envelope.
+  const MAX_BODY_BYTES = MAX_PAYLOAD_BYTES + 65536;
   const httpServer = createServer(async (req, res) => {
     if (req.url?.split("?")[0] !== "/mcp") {
       res.writeHead(404, { "content-type": "application/json" });
@@ -237,6 +240,22 @@ if (transportName === "http") {
       res.end("Method not allowed.");
       return;
     }
+    // Reject declared-oversized bodies up front (413) and count streamed
+    // bytes so a lying or missing Content-Length cannot bypass the cap.
+    const declared = Number(req.headers["content-length"] ?? 0);
+    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+      res.writeHead(413, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "payload too large" }));
+      return;
+    }
+    // Propagate client disconnects into the in-flight provider call: the
+    // AbortController aborts the WHATWG Request when the socket drops before
+    // the response is written. res "close" fires on completion too, so guard
+    // on writableEnded.
+    const ac = new AbortController();
+    res.on("close", () => {
+      if (!res.writableEnded) ac.abort();
+    });
     try {
       // Convert the node:http exchange to a WHATWG Request (Node >= 18 has
       // global Request/Response); only POSTs reach here, so always read body.
@@ -246,11 +265,25 @@ if (transportName === "http") {
         if (value === undefined) continue;
         for (const item of Array.isArray(value) ? value : [value]) headers.append(key, item);
       }
+      // Count streamed bytes in a pull-based transform so a lying or missing
+      // Content-Length cannot bypass the cap (drops the connection on overflow).
+      let received = 0;
+      const sizeGuard = new TransformStream({
+        transform(chunk, controller) {
+          received += chunk.byteLength;
+          if (received > MAX_BODY_BYTES) {
+            controller.error(new Error("payload too large"));
+            return;
+          }
+          controller.enqueue(chunk);
+        },
+      });
       const request = new Request(url, {
         method: req.method,
         headers,
-        body: ReadableStream.from(req),
+        body: ReadableStream.from(req).pipeThrough(sizeGuard),
         duplex: "half",
+        signal: ac.signal,
       });
       const response = await handler.fetch(request);
       const responseHeaders = {};
@@ -268,12 +301,22 @@ if (transportName === "http") {
         res.end();
       }
     } catch (err) {
-      console.error(`http request failed: ${err && err.message ? err.message : err}`);
+      const message = err && err.message ? err.message : String(err);
+      console.error(`http request failed: ${message}`);
+      if (message === "payload too large") {
+        res.writeHead(413, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "payload too large" }));
+        return;
+      }
       if (!res.headersSent) {
         res.writeHead(500, { "content-type": "application/json" });
       }
       res.end(JSON.stringify({ error: "internal error" }));
     }
+  });
+  httpServer.on("error", (err) => {
+    console.error(`http server error: ${err && err.message ? err.message : err}`);
+    process.exit(1);
   });
   httpServer.listen(port, host, () => {
     console.error(`decisions-judge-mcp listening on http://${host}:${port}/mcp`);

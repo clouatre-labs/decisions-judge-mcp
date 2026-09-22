@@ -123,8 +123,22 @@ if (getResponse.status !== 405) {
   fail(`GET /mcp returned status ${getResponse.status}, expected 405`);
 }
 
+// A declared-oversized body must be rejected with 413 before parsing.
+const oversizedBody = "x".repeat(400 * 1024);
+const oversized = await fetch(`http://127.0.0.1:${port}/mcp`, {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+  },
+  body: oversizedBody,
+}).catch((err) => fail(`oversized POST /mcp failed: ${err.message}`));
+if (oversized.status !== 413) {
+  fail(`oversized POST /mcp returned status ${oversized.status}, expected 413`);
+}
+
 console.log(
-  `smoke-http: OK (server ${result.serverInfo.name}@${result.serverInfo.version}, initialize 200, GET 405)`,
+  `smoke-http: OK (server ${result.serverInfo.name}@${result.serverInfo.version}, initialize 200, GET 405, oversized 413)`,
 );
 proc.kill("SIGKILL");
 process.exit(0);
