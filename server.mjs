@@ -313,12 +313,22 @@ if (transportName === "http") {
         res.end(JSON.stringify({ error: "payload too large" }));
         return;
       }
-      if (!res.headersSent) {
-        res.writeHead(500, { "content-type": "application/json" });
+      // If headers/body already started streaming, appending a JSON error
+      // would corrupt the in-flight JSON-RPC/SSE response; destroy instead.
+      if (res.headersSent) {
+        res.destroy(err instanceof Error ? err : new Error(message));
+        return;
       }
+      res.writeHead(500, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "internal error" }));
     }
   });
+  // Bound connection lifetime to the tool's own 60s timeout_ms cap (server.mjs
+  // inputSchema) rather than Node's much longer defaults (headersTimeout 60s,
+  // requestTimeout 300s), so a slow client can't hold a socket open far past
+  // any legitimate judge call. keepAliveTimeout is left at Node's default (5s).
+  httpServer.headersTimeout = 60_000;
+  httpServer.requestTimeout = 65_000;
   httpServer.on("error", (err) => {
     console.error(`http server error: ${err && err.message ? err.message : err}`);
     process.exit(1);
