@@ -12,7 +12,7 @@ Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clou
 
 ![judge demo](docs/demo.gif)
 
-To regenerate the demo: `brew install vhs`, then run `vhs docs/demo.tape` from a checkout.
+To regenerate the demo: `brew install vhs`, then run `vhs docs/demo.tape` from a checkout. The success scene uses a checked-in fixture; set `DEMO_LIVE=1` (with `TYPESAFE_API_KEY` present) to make it perform a live API call.
 
 ## Why
 

@@ -3,8 +3,12 @@
 //   Scene 1: the README Example tools/call, pretty-printed result.
 //   Scene 2: server spawned with TYPESAFE_API_KEY explicitly absent, showing
 //            the guaranteed {fallback: true, error} envelope.
-// If TYPESAFE_API_KEY is unset in the parent env at render time, Scene 1
-// prints the README Example response as a deterministic offline fixture.
+// Scene 1 always prints the checked-in README Example response fixture
+// (deterministic, offline, no cost). A live API call runs only when both
+// DEMO_LIVE=1 and TYPESAFE_API_KEY are set in the environment.
+//   Scene 2: server spawned with TYPESAFE_API_KEY explicitly absent and other
+//            provider credentials scrubbed, showing the guaranteed
+//            {fallback: true, error} envelope.
 // Never echoes environment values. Node >= 20, no dependencies.
 import { spawn } from "node:child_process";
 
@@ -51,11 +55,20 @@ function pretty(label, obj) {
   console.log(JSON.stringify(obj, null, 2));
 }
 
+// Environment variables unrelated to the typesafe-api default provider.
+// Scrubbed from the child env so the outage scene is deterministic.
+const PROVIDER_ENV_KEYS = [
+  "JUDGE_PROVIDER",
+  "CLOUDFLARE_API_TOKEN",
+  "CLOUDFLARE_ACCOUNT_ID",
+];
+
 // Spawn server.mjs and run one judge tools/call over MCP stdio, returning the
 // parsed JSON payload from the tool's text content.
 function runJudge({ omitApiKey }) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
+    for (const key of PROVIDER_ENV_KEYS) delete env[key];
     if (omitApiKey) delete env.TYPESAFE_API_KEY;
     const child = spawn(process.execPath, ["server.mjs"], {
       stdio: ["pipe", "pipe", "pipe"],
@@ -84,6 +97,13 @@ function runJudge({ omitApiKey }) {
           continue;
         }
         if (msg.id === 1 && msg.result) {
+          // MCP protocol: notify the server that initialization finished.
+          child.stdin.write(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              method: "notifications/initialized",
+            }) + "\n",
+          );
           child.stdin.write(
             JSON.stringify({
               jsonrpc: "2.0",
@@ -133,14 +153,22 @@ function runJudge({ omitApiKey }) {
 
 console.log("$ node scripts/demo.mjs");
 
-// Scene 1: success path with the README Example request.
-if (process.env.TYPESAFE_API_KEY) {
-  pretty("judge: success", await runJudge({ omitApiKey: false }));
+// Scene 1: fixture-first. Live call only on explicit DEMO_LIVE=1 opt-in.
+if (process.env.DEMO_LIVE === "1" && process.env.TYPESAFE_API_KEY) {
+  pretty("judge: success (live)", await runJudge({ omitApiKey: false }));
 } else {
-  // Deterministic offline fixture so the tape always renders.
-  pretty("judge: success (offline fixture, README Example)", README_EXAMPLE_RESPONSE);
+  // Deterministic checked-in fixture: no cost, no network.
+  pretty(
+    "judge: success (fixture, README Example; set DEMO_LIVE=1 for a live call)",
+    README_EXAMPLE_RESPONSE,
+  );
 }
 
 // Scene 2: deliberate outage -- no TYPESAFE_API_KEY in the child env.
-pretty("judge: fallback envelope (no API key)", await runJudge({ omitApiKey: true }));
+const outage = await runJudge({ omitApiKey: true });
+if (outage.fallback !== true) {
+  console.error("outage scene failed: expected fallback envelope");
+  process.exit(1);
+}
+pretty("judge: fallback envelope (no API key)", outage);
 console.log("\ndone.");
