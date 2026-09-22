@@ -17,7 +17,8 @@
   },
   "files": [
     "server.mjs",
-    "providers/cloudflare.mjs",
+    "providers/typesafe-api.mjs",
+    "providers/cloudflare-workers-ai.mjs",
     "README.md",
     "LICENSE"
   ],

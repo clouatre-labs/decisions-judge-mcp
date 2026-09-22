@@ -4,7 +4,7 @@
 // path. Exits 0 on success, non-zero on any failure or timeout. Does not
 // require TYPESAFE_API_KEY.
 import { spawn } from "node:child_process";
-import { cloudflareJudge } from "../providers/cloudflare.mjs";
+import { cloudflareJudge } from "../providers/cloudflare-workers-ai.mjs";
 
 const TIMEOUT_MS = 10_000;
 
@@ -44,7 +44,7 @@ const judgeArgs = {
   questions: { is_bug: { type: "noul", instructions: "Is this a defect?" } },
 };
 
-// Deterministic offline coverage: import providers/cloudflare.mjs in-process
+// Deterministic offline coverage: import providers/cloudflare-workers-ai.mjs in-process
 // and stub global.fetch. One happy path plus one edge case per behavior.
 async function runOfflineCloudflareTests() {
   const savedEnv = {
