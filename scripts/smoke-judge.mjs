@@ -10,6 +10,7 @@
 // success, non-zero on any failure or timeout. Does not require
 // TYPESAFE_API_KEY.
 import { spawn } from "node:child_process";
+import { cloudflareJudge } from "../providers/cloudflare.mjs";
 
 const TIMEOUT_MS = 10_000;
 
@@ -409,6 +410,166 @@ function runLiveCase(token, account) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Deterministic offline coverage: import providers/cloudflare.mjs in-process
+// and stub global.fetch with a controllable fake. No network, no MCP stdio.
+// One happy path plus one edge case per behavior; must exit 0 offline.
+// ---------------------------------------------------------------------------
+
+function ok(msg) {
+  console.log(`smoke-judge: OK (${msg})`);
+}
+
+function offlineFail(msg) {
+  console.error(`smoke-judge: FAIL: ${msg}`);
+  process.exit(1);
+}
+
+function fakeResponse({ status = 200, body }) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+    arrayBuffer: async () => new ArrayBuffer(0),
+    body: null,
+  };
+}
+
+async function runOfflineCloudflareTests() {
+  const savedEnv = {
+    token: process.env.CLOUDFLARE_API_TOKEN,
+    account: process.env.CLOUDFLARE_ACCOUNT_ID,
+  };
+  const savedFetch = globalThis.fetch;
+  const TOKEN = "offline-test-token";
+  const ACCOUNT = "a".repeat(32);
+  process.env.CLOUDFLARE_API_TOKEN = TOKEN;
+  process.env.CLOUDFLARE_ACCOUNT_ID = ACCOUNT;
+  const judgeArgs = {
+    state: { ticket: "checkout page blank after Pay" },
+    questions: { is_bug: { type: "noul", instructions: "Is this a defect?" } },
+  };
+  try {
+    // 1. Happy path: well-formed envelope -> {answers, model, usage, fallback:false}.
+    {
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls++;
+        return fakeResponse({
+          body: {
+            success: true,
+            result: {
+              state: "Completed",
+              result: {
+                answers: { is_bug: "yes" },
+                model: "typesafe/jev",
+                usage: { prompt_tokens: 1, completion_tokens: 1 },
+              },
+            },
+          },
+        });
+      };
+      const out = await cloudflareJudge({ ...judgeArgs });
+      if (out.fallback !== false || out.answers?.is_bug !== "yes" || out.model !== "typesafe/jev") {
+        offlineFail(`happy path: unexpected result ${JSON.stringify(out)}`);
+      }
+      if (calls !== 1) offlineFail(`happy path: expected 1 fetch call, got ${calls}`);
+      ok("cloudflare offline happy path");
+    }
+
+    // 2. Retry exhaustion: persistent 429 -> fallback-envelope error, fetch retried.
+    {
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls++;
+        return fakeResponse({ status: 429, body: { success: false, errors: [] } });
+      };
+      let err;
+      try {
+        await cloudflareJudge({ ...judgeArgs });
+      } catch (e) {
+        err = e;
+      }
+      if (!err || err.status !== 429) {
+        offlineFail(`retry exhaustion: expected status 429 error, got ${String(err)}`);
+      }
+      if (calls <= 1) {
+        offlineFail(`retry exhaustion: expected retried fetch (calls > 1), got ${calls}`);
+      }
+      ok(`cloudflare offline retry exhaustion (fetch called ${calls} times)`);
+    }
+
+    // 3. Non-string errors[].message: parser must degrade to HTTP status, not throw.
+    {
+      globalThis.fetch = async () =>
+        fakeResponse({ status: 400, body: { success: false, errors: [{ code: 1, message: 123 }] } });
+      let err;
+      try {
+        await cloudflareJudge({ ...judgeArgs });
+      } catch (e) {
+        err = e;
+      }
+      if (!err || err.status !== 400 || typeof err.message !== "string") {
+        offlineFail(`non-string errors message: expected status 400 string error, got ${String(err)}`);
+      }
+      ok(`cloudflare offline non-string errors message (HTTP 400: ${err.message})`);
+    }
+
+    // 4. Secret redaction: token and account id must never surface in errors.
+    {
+      globalThis.fetch = async () =>
+        fakeResponse({
+          status: 500,
+          body: {
+            success: false,
+            errors: [{ code: 1, message: `bad credentials ${TOKEN} for account ${ACCOUNT}` }],
+          },
+        });
+      let err;
+      try {
+        await cloudflareJudge({ ...judgeArgs });
+      } catch (e) {
+        err = e;
+      }
+      if (!err || !err.message.includes("[redacted]") || err.message.includes(TOKEN) || err.message.includes(ACCOUNT)) {
+        offlineFail(`secret redaction: secrets leaked: ${String(err?.message)}`);
+      }
+      ok("cloudflare offline secret redaction");
+    }
+
+    // 5. Answers array rejection: answers must be a plain object, not an array.
+    {
+      globalThis.fetch = async () =>
+        fakeResponse({
+          body: {
+            success: true,
+            result: { state: "Completed", result: { answers: ["yes"] } },
+          },
+        });
+      let err;
+      try {
+        await cloudflareJudge({ ...judgeArgs });
+      } catch (e) {
+        err = e;
+      }
+      if (!err || !/unexpected response envelope/.test(String(err?.message))) {
+        offlineFail(`answers array: expected envelope rejection, got ${String(err)}`);
+      }
+      ok("cloudflare offline answers array rejection");
+    }
+  } finally {
+    globalThis.fetch = savedFetch;
+    if (savedEnv.token === undefined) delete process.env.CLOUDFLARE_API_TOKEN;
+    else process.env.CLOUDFLARE_API_TOKEN = savedEnv.token;
+    if (savedEnv.account === undefined) delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    else process.env.CLOUDFLARE_ACCOUNT_ID = savedEnv.account;
+  }
+}
+
+await runOfflineCloudflareTests();
+
+// Stdio smoke tests below require the credentials-absent child env and no
+// fake fetch (restored above).
 let timer = setTimeout(
   () => fail(`no response within ${TIMEOUT_MS}ms`),
   TIMEOUT_MS,

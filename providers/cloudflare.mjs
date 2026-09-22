@@ -33,14 +33,29 @@ function redactSecrets(text, secrets) {
   return out;
 }
 
+// Total: never throws, whatever shape `body` takes. Any malformed errors[]
+// (non-array, non-object items, non-string message, missing message) degrades
+// to a best-effort string or null so the HTTP-status error mapping always has
+// a usable fallback.
 function cfErrorEnvelopeMessage(body, redact) {
-  if (Array.isArray(body?.errors) && body.errors.length > 0) {
-    const messages = body.errors
-      .map((e) =>
-        e && typeof e === "object" && e.message ? redact(e.message) : redact(String(e)),
-      )
-      .filter(Boolean);
-    if (messages.length > 0) return messages.join("; ");
+  try {
+    if (Array.isArray(body?.errors) && body.errors.length > 0) {
+      const messages = body.errors
+        .map((e) => {
+          const raw =
+            e && typeof e === "object" && typeof e.message === "string"
+              ? e.message
+              : e && typeof e === "object" && e.message != null
+                ? String(e.message)
+                : String(e);
+          return redact(raw);
+        })
+        .filter(Boolean);
+      if (messages.length > 0) return messages.join("; ");
+    }
+  } catch {
+    // Intentionally swallowed: the caller falls back to the HTTP status and
+    // generic text.
   }
   return null;
 }
