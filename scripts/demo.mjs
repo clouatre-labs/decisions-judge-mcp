@@ -17,6 +17,26 @@ const TIMEOUT_MS = 15_000;
 // Small delay helper so the demo output is readable in the rendered GIF.
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// ANSI SGR codes for JSON token classes (resolved by the terminal theme).
+const C = { key: "\x1b[36m", string: "\x1b[32m", number: "\x1b[35m", bool: "\x1b[31m", reset: "\x1b[0m" };
+
+// Pretty-print JSON with dependency-free syntax highlighting. Emits plain
+// text when stdout is not a TTY (CI/smoke piping). Key coloring runs first
+// (matching `"key":`) so string values are not clobbered.
+function highlightJson(obj) {
+  const json = JSON.stringify(obj, null, 2);
+  if (!process.stdout.isTTY) return json;
+  const r = C.reset;
+  const keyed = json.replace(
+    /"(\\.|[^"\\])*"(?=\s*:)/g,
+    (m) => `${C.key}${m}${r}`,
+  );
+  return keyed
+    .replace(/(?<!\\)"((\\.|[^"\\])*)"(?=(,|\s*[}\]]|$))/g, (m) => `${C.string}${m}${r}`)
+    .replace(/: (-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)/gi, (_, n) => `: ${C.number}${n}${r}`)
+    .replace(/: (true|false|null)/g, (m) => `: ${C.bool}${m.slice(2)}${r}`);
+}
+
 // README Example input, verbatim.
 const JUDGE_ARGS = {
   state: { tests: "passing", lint: "clean", filesChanged: 3 },
@@ -180,10 +200,10 @@ await sleep(400);
 console.log("\n== judge: success ==");
 await sleep(600);
 if (process.env.DEMO_LIVE === "1" && process.env.TYPESAFE_API_KEY) {
-  console.log(JSON.stringify(await runJudge({ omitApiKey: false }), null, 2));
+  console.log(highlightJson(await runJudge({ omitApiKey: false })));
 } else {
   // Deterministic checked-in fixture: no cost, no network.
-  console.log(JSON.stringify(README_EXAMPLE_RESPONSE, null, 2));
+  console.log(highlightJson(README_EXAMPLE_RESPONSE));
 }
 await sleep(1500);
 
@@ -202,7 +222,7 @@ if (typeof outage.error !== "string") {
 }
 console.log("\n== judge: fallback envelope (no API key) ==");
 await sleep(600);
-console.log(JSON.stringify(outage, null, 2));
+console.log(highlightJson(outage));
 await sleep(1500);
 await sleep(1000);
 console.log("\ndone.");
