@@ -17,6 +17,7 @@
   },
   "files": [
     "server.mjs",
+    "providers/cloudflare.mjs",
     "README.md",
     "LICENSE"
   ],
