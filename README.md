@@ -10,6 +10,14 @@ Currently backed by the [TypeSafe System One](https://typesafe.ai) model (Jev) v
 
 Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clouatre-labs/agentic-coder-skill).
 
+## Demo
+
+![judge demo](docs/demo.gif)
+
+Judge returns typed answers your code can branch on — and a guaranteed fallback envelope when the model is unreachable.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to regenerate the demo.
+
 ## Why
 
 - **Programmable common sense**: judgment as a primitive your code can branch on, not a prompt-and-parse loop
