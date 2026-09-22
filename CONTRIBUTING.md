@@ -7,11 +7,7 @@
 
 ## Demo GIF
 
-- The tape (`docs/demo.tape`), driving `scripts/demo.mjs`, is the source of truth for the README demo.
-- Render with [vhs](https://github.com/charmbracelet/vhs).
-- Warning: vhs v0.12.0 (current release) is affected by [charmbracelet/vhs#787](https://github.com/charmbracelet/vhs/issues/787) (exits 0 without writing output); until a patched release, use a build from the fix PR.
-- The success scene uses a checked-in fixture by default; set `DEMO_LIVE=1` (with `TYPESAFE_API_KEY` present) for a live call.
-- Commit the regenerated `docs/demo.gif`.
+The README demo is generated from `docs/demo.tape` with [vhs](https://github.com/charmbracelet/vhs), which drives `scripts/demo.mjs`; commit the regenerated `docs/demo.gif`. Note: vhs v0.12.0 is affected by [charmbracelet/vhs#787](https://github.com/charmbracelet/vhs/issues/787) (exits without writing output), so use a build from the fix PR until a patched release. Rendering is offline by default; set `DEMO_LIVE=1` (plus `TYPESAFE_API_KEY`) for a live first scene.
 
 ## Commit conventions
 
