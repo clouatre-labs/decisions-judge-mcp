@@ -10,7 +10,7 @@ Backed by the [TypeSafe System One](https://typesafe.ai) model (Jev) via [`@type
 
 ## Get started
 
-Add to `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`) — the same JSON shape works for codex, goose, and pi:
+Add to `claude_desktop_config.json` (`~/Library/Application Support/Claude/`) — the same JSON shape works for codex, goose, and pi:
 
 ```json
 {
@@ -136,8 +136,6 @@ mcp:
   }
 }
 ```
-
-**Windows note:** some clients need `cmd /c npx` — use `"command": "cmd"` with `"args": ["/c", "npx", "-y", "decisions-judge-mcp"]`.
 
 ## Tool reference: `judge`
 
