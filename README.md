@@ -26,6 +26,22 @@ Add to `claude_desktop_config.json` (`~/Library/Application Support/Claude/`) â€
 
 Then ask your agent anything answerable with a judgment â€” it can call the `judge` tool.
 
+## Remote transport (opt-in)
+
+By default the server speaks stdio. Set `JUDGE_TRANSPORT=http` to serve the MCP Streamable HTTP transport (spec revision 2026-07-28) at `POST /mcp` instead:
+
+```sh
+JUDGE_TRANSPORT=http HTTP_HOST=127.0.0.1 HTTP_PORT=8080 npx -y decisions-judge-mcp
+```
+
+- `JUDGE_TRANSPORT`: `stdio` (default) or `http`. Any other value exits with an error.
+- `HTTP_HOST`: bind address, default `127.0.0.1`.
+- `HTTP_PORT`: port, default `8080`; must be 1-65535.
+
+Serving is stateless: each request is handled independently, with no protocol-level sessions (`GET`/`DELETE` on `/mcp` return 405).
+
+**Security warning:** the HTTP endpoint is unauthenticated. Production remote deployments must be fronted by an authenticating OAuth 2.1 proxy per the MCP 2026-07-28 authorization specification.
+
 ## Demo
 
 ![judge demo](docs/demo.gif)
