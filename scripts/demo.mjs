@@ -14,6 +14,9 @@ import { spawn } from "node:child_process";
 
 const TIMEOUT_MS = 15_000;
 
+// Small delay helper so the demo output is readable in the rendered GIF.
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 // README Example input, verbatim.
 const JUDGE_ARGS = {
   state: { tests: "passing", lint: "clean", filesChanged: 3 },
@@ -49,11 +52,6 @@ const README_EXAMPLE_RESPONSE = {
   usage: { input_tokens: 214, output_tokens: 18 },
   fallback: false,
 };
-
-function pretty(label, obj) {
-  console.log(`\n== ${label} ==`);
-  console.log(JSON.stringify(obj, null, 2));
-}
 
 // Environment variables unrelated to the typesafe-api default provider.
 // Scrubbed from the child env so the outage scene is deterministic.
@@ -177,18 +175,19 @@ function runJudge({ omitApiKey }) {
   });
 }
 
-console.log("$ node scripts/demo.mjs");
+console.log("$ env -u DEMO_LIVE node scripts/demo.mjs");
+await sleep(1000);
 
 // Scene 1: fixture-first. Live call only on explicit DEMO_LIVE=1 opt-in.
+console.log("\n== judge: success ==");
+await sleep(600);
 if (process.env.DEMO_LIVE === "1" && process.env.TYPESAFE_API_KEY) {
-  pretty("judge: success (live)", await runJudge({ omitApiKey: false }));
+  console.log(JSON.stringify(await runJudge({ omitApiKey: false }), null, 2));
 } else {
   // Deterministic checked-in fixture: no cost, no network.
-  pretty(
-    "judge: success (fixture, README Example; set DEMO_LIVE=1 for a live call)",
-    README_EXAMPLE_RESPONSE,
-  );
+  console.log(JSON.stringify(README_EXAMPLE_RESPONSE, null, 2));
 }
+await sleep(4500);
 
 // Scene 2: deliberate outage -- no TYPESAFE_API_KEY in the child env.
 const outage = await runJudge({ omitApiKey: true });
@@ -203,5 +202,8 @@ if (typeof outage.error !== "string") {
   );
   process.exit(1);
 }
-pretty("judge: fallback envelope (no API key)", outage);
+console.log("\n== judge: fallback envelope (no API key) ==");
+await sleep(600);
+console.log(JSON.stringify(outage, null, 2));
+await sleep(4500);
 console.log("\ndone.");

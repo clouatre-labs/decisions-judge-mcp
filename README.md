@@ -10,9 +10,13 @@ Currently backed by the [TypeSafe System One](https://typesafe.ai) model (Jev) v
 
 Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clouatre-labs/agentic-coder-skill).
 
+## Demo
+
 ![judge demo](docs/demo.gif)
 
-To regenerate the demo, install [vhs](https://github.com/charmbracelet/vhs). Note: v0.12.0 (current release) is affected by [charmbracelet/vhs#787](https://github.com/charmbracelet/vhs/issues/787) (exits without writing output); until a patched release, build vhs from the fix PR and render `docs/demo.tape` with that working build, then commit the resulting `docs/demo.gif`. The success scene uses a checked-in fixture; set `DEMO_LIVE=1` (with `TYPESAFE_API_KEY` present) to make it perform a live API call.
+Judge returns typed answers your code can branch on — and a guaranteed fallback envelope when the model is unreachable.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to regenerate the demo.
 
 ## Why
 
