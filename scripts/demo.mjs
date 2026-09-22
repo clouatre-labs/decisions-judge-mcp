@@ -175,10 +175,8 @@ function runJudge({ omitApiKey }) {
   });
 }
 
-console.log("$ env -u DEMO_LIVE node scripts/demo.mjs");
-await sleep(1000);
-
 // Scene 1: fixture-first. Live call only on explicit DEMO_LIVE=1 opt-in.
+await sleep(400);
 console.log("\n== judge: success ==");
 await sleep(600);
 if (process.env.DEMO_LIVE === "1" && process.env.TYPESAFE_API_KEY) {
@@ -187,7 +185,7 @@ if (process.env.DEMO_LIVE === "1" && process.env.TYPESAFE_API_KEY) {
   // Deterministic checked-in fixture: no cost, no network.
   console.log(JSON.stringify(README_EXAMPLE_RESPONSE, null, 2));
 }
-await sleep(4500);
+await sleep(1500);
 
 // Scene 2: deliberate outage -- no TYPESAFE_API_KEY in the child env.
 const outage = await runJudge({ omitApiKey: true });
@@ -205,5 +203,6 @@ if (typeof outage.error !== "string") {
 console.log("\n== judge: fallback envelope (no API key) ==");
 await sleep(600);
 console.log(JSON.stringify(outage, null, 2));
-await sleep(4500);
+await sleep(1500);
+await sleep(1000);
 console.log("\ndone.");
