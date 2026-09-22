@@ -19,6 +19,34 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import { TypeSafeClient, choice, noul, score } from "@typesafe-ai/sdk";
+import { cloudflareJudge } from "./providers/cloudflare.mjs";
+
+// Startup provider selection: JUDGE_PROVIDER is read exactly once, at server
+// startup. Explicit selection only -- the provider is never inferred from
+// which credential env vars happen to be set. The judge tool schema,
+// description, and server instructions are identical for both backends.
+const VALID_PROVIDERS = ["typesafe-api", "cloudflare-workers-ai"];
+const provider = process.env.JUDGE_PROVIDER || "typesafe-api";
+if (!VALID_PROVIDERS.includes(provider)) {
+  console.error(
+    `JUDGE_PROVIDER must be one of: ${VALID_PROVIDERS.join(", ")} (got "${provider}")`,
+  );
+  process.exit(1);
+}
+if (provider === "cloudflare-workers-ai") {
+  if (!process.env.CLOUDFLARE_API_TOKEN || process.env.CLOUDFLARE_API_TOKEN.trim() === "") {
+    console.error(
+      "CLOUDFLARE_API_TOKEN must be set to a non-empty value when JUDGE_PROVIDER=cloudflare-workers-ai",
+    );
+    process.exit(1);
+  }
+  if (!/^[a-f0-9]{32}$/i.test(process.env.CLOUDFLARE_ACCOUNT_ID ?? "")) {
+    console.error(
+      "CLOUDFLARE_ACCOUNT_ID must be a 32-character hex account id when JUDGE_PROVIDER=cloudflare-workers-ai",
+    );
+    process.exit(1);
+  }
+}
 
 // EntryType: SDK accepts a string or arbitrary JSON structure.
 const entryType = z.union([
@@ -47,6 +75,32 @@ const inputSchema = z.object({
   timeout_ms: z.number().int().positive().max(60000).optional(),
   model: z.string().min(1).optional(),
 });
+
+// Criteria checks shared by both provider paths. Runs before any provider
+// call so malformed questions return the documented fallback error (never an
+// API request).
+function validateQuestionSpec(spec) {
+  if (spec.type === "choice") {
+    if (!spec.criteria || Array.isArray(spec.criteria) || typeof spec.criteria !== "object") {
+      throw new Error(`choice question requires criteria as an object of {option: description}`);
+    }
+  } else if (spec.type === "score") {
+    if (!Array.isArray(spec.criteria) || spec.criteria.length < 2) {
+      throw new Error(`score question requires criteria as an ordered array of at least two level descriptions`);
+    }
+  }
+}
+
+function envelope(payload) {
+  return {
+    structuredContent: payload,
+    content: [{ type: "text", text: JSON.stringify(payload) }],
+  };
+}
+
+function fallbackEnvelope(error) {
+  return envelope({ fallback: true, error });
+}
 
 function buildQuestion(spec) {
   if (spec.type === "choice") {
@@ -88,6 +142,72 @@ const server = new McpServer(
   },
 );
 
+// Typesafe path (default): buildQuestion applies the same criteria checks as
+// validateQuestionSpec and constructs the SDK question objects.
+async function typesafeJudge({ state, questions, timeout_ms, model }, ctx) {
+  let qmap;
+  try {
+    qmap = Object.fromEntries(
+      Object.entries(questions).map(([name, spec]) => [name, buildQuestion(spec)]),
+    );
+  } catch (err) {
+    return fallbackEnvelope(
+      err && err.message ? err.message : "question construction failed",
+    );
+  }
+  try {
+    const request = { state, questions: qmap };
+    if (model) request.model = model;
+    const options = timeout_ms
+      ? { timeout: timeout_ms, signal: ctx?.signal }
+      : ctx?.signal
+        ? { signal: ctx.signal }
+        : undefined;
+    const result = await getClient().systemOne(request, options);
+    return envelope({
+      answers: result.answers,
+      model: result.model,
+      usage: result.usage,
+      fallback: false,
+    });
+  } catch (err) {
+    const message = err && err.message ? err.message : "typesafe request failed";
+    return fallbackEnvelope(
+      typeof err?.status === "number" ? `${message} (HTTP ${err.status})` : message,
+    );
+  }
+}
+
+// Cloudflare path: validate the question specs before any provider call, then
+// hand off to the provider. Every error lands in the fallback envelope.
+async function cloudflareHandler({ state, questions, timeout_ms, model }, ctx) {
+  try {
+    for (const spec of Object.values(questions)) validateQuestionSpec(spec);
+  } catch (err) {
+    return fallbackEnvelope(
+      err && err.message ? err.message : "question construction failed",
+    );
+  }
+  try {
+    const payload = await cloudflareJudge({
+      state,
+      questions,
+      model,
+      timeout_ms,
+      signal: ctx?.signal,
+    });
+    return envelope(payload);
+  } catch (err) {
+    const message = err && err.message ? err.message : "cloudflare request failed";
+    return fallbackEnvelope(
+      typeof err?.status === "number" ? `${message} (HTTP ${err.status})` : message,
+    );
+  }
+}
+
+const judgeHandler =
+  provider === "cloudflare-workers-ai" ? cloudflareHandler : typesafeJudge;
+
 server.registerTool(
   "judge",
   {
@@ -101,53 +221,7 @@ server.registerTool(
       openWorldHint: true,
     },
   },
-  async ({ state, questions, timeout_ms, model }, ctx) => {
-    let qmap;
-    try {
-      qmap = Object.fromEntries(
-        Object.entries(questions).map(([name, spec]) => [name, buildQuestion(spec)]),
-      );
-    } catch (err) {
-      const payload = {
-        fallback: true,
-        error: err && err.message ? err.message : "question construction failed",
-      };
-      return {
-        structuredContent: payload,
-        content: [{ type: "text", text: JSON.stringify(payload) }],
-      };
-    }
-    try {
-      const request = { state, questions: qmap };
-      if (model) request.model = model;
-      const options = timeout_ms
-        ? { timeout: timeout_ms, signal: ctx?.signal }
-        : ctx?.signal
-          ? { signal: ctx.signal }
-          : undefined;
-      const result = await getClient().systemOne(request, options);
-      const payload = {
-        answers: result.answers,
-        model: result.model,
-        usage: result.usage,
-        fallback: false,
-      };
-      return {
-        structuredContent: payload,
-        content: [{ type: "text", text: JSON.stringify(payload) }],
-      };
-    } catch (err) {
-      const message = err && err.message ? err.message : "typesafe request failed";
-      const payload = {
-        fallback: true,
-        error: typeof err?.status === "number" ? `${message} (HTTP ${err.status})` : message,
-      };
-      return {
-        structuredContent: payload,
-        content: [{ type: "text", text: JSON.stringify(payload) }],
-      };
-    }
-  },
+  judgeHandler,
 );
 
 const transport = new StdioServerTransport();

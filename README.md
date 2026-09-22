@@ -6,7 +6,7 @@
 
 **Typed decisions for AI agents, as an MCP tool.** Ask yes/no probability (`noul`), choice among options, or score on ordered levels about any JSON application state. All questions answered in one fast request; failures return a `{fallback: true, error}` envelope instead of blocking, so it is safe to compose into agent workflows.
 
-Currently backed by the [TypeSafe System One](https://typesafe.ai) model (Jev) via [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk). The provider-neutral `judge` primitive maps naturally onto related decision APIs such as [OpenRouter alphadecisions](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request).
+Currently backed by the [TypeSafe System One](https://typesafe.ai) model (Jev) via [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk), with an opt-in [Cloudflare Workers AI](https://developers.cloudflare.com/ai/models/typesafe/jev/) backend selected once at server startup (`JUDGE_PROVIDER=cloudflare-workers-ai`) for users without a TypeSafe invite. The provider-neutral `judge` primitive maps naturally onto related decision APIs such as [OpenRouter alphadecisions](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request).
 
 Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clouatre-labs/agentic-coder-skill).
 
@@ -146,6 +146,17 @@ disconnects.
 | `score` | ordered array of level descriptions | best matching level |
 
 Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failure.
+
+## Backends
+
+The backend is selected once at server startup via `JUDGE_PROVIDER`. Valid values: `typesafe-api` (default) and `cloudflare-workers-ai`. Selection is explicit only: setting the Cloudflare credential env vars never switches backends on its own, and the judge tool's schema, description, and the server instructions are identical under both backends.
+
+- `typesafe-api` (default): unchanged behavior. Uses `TYPESAFE_API_KEY` and `@typesafe-ai/sdk` exactly as before; existing callers see no difference.
+- `cloudflare-workers-ai`: routes the same Jev model through Cloudflare Workers AI. Requires `CLOUDFLARE_API_TOKEN` (needs `Account -> Workers AI -> Edit`) and `CLOUDFLARE_ACCOUNT_ID` (32-character hex).
+
+Startup failures are fatal by design. If `JUDGE_PROVIDER` is set to an unknown value, or `cloudflare-workers-ai` is selected with `CLOUDFLARE_API_TOKEN` unset or `CLOUDFLARE_ACCOUNT_ID` not a 32-character hex id, the server exits non-zero naming the offending variable instead of starting in a degraded state.
+
+Billing gotcha: `typesafe/jev` is a partner model on Cloudflare, so runs are metered from the **AI Gateway prepaid credit balance**, not the account's payment card, regardless of the gateway's billing setting or whether a gateway is used. Accounts with a valid card but zero credit balance get HTTP 402 (error 2021, "Insufficient balance"); top up AI Gateway prepaid credit before calling.
 
 ## Development
 
