@@ -38,6 +38,14 @@ Release is exactly two steps:
 - Never modify the release workflow as part of a release; workflow changes go through their own reviewed PR outside a release window.
 - The "Bypassed rule violations" audit event on tag push is expected: the Release Tag Protection ruleset grants admins a deliberate `always` bypass; the audit event is the trail. See CONTRIBUTING.md.
 
+## Audits
+
+Audit records live in `docs/audit/` as `YYYY-MM-DD-slug.md`. Follow the existing docs for format (metadata block, Purpose, Methodology, Findings, Summary Table, reproduction commands). Rules:
+
+- Verdicts: CONFIRMED / PARTIAL / REFUTED, defined inline in Methodology.
+- Verify claims against installed package sources and the live tree, never training data.
+- Historical audits are immutable: formatting fixes and dated follow-up notes only.
+
 ## Design references
 
 - CONTRIBUTING.md

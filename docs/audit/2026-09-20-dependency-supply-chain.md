@@ -5,6 +5,10 @@ Commit: 5293085
 Version: v1.0.3  
 Toolchain: Node >= 20 / npm 11.19.1 / Node v26.9.0 / @modelcontextprotocol/sdk 1.30.0 / zod 4.6.5
 
+## See Also
+
+- [2026-09-21-mcp-server-review.md](2026-09-21-mcp-server-review.md) -- follow-up review that re-verified this audit's F1-F4 against the post-migration tree
+
 ## Purpose
 
 Point-in-time audit of the dependency supply chain for `decisions-judge-mcp` v1.0.3, triggered by a Socket.dev report showing a supply chain score of 71 and a banner reading "Dependencies have 8 high alerts". Establishes whether the flagged alerts reflect real install-time risk for consumers, how large the production dependency surface actually is, and whether any remediation is warranted in this repository.
