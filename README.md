@@ -10,6 +10,10 @@ Currently backed by the [TypeSafe System One](https://typesafe.ai) model (Jev) v
 
 Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clouatre-labs/agentic-coder-skill).
 
+![judge demo](docs/demo.gif)
+
+To regenerate the demo: `brew install vhs`, then run `vhs docs/demo.tape` from a checkout.
+
 ## Why
 
 - **Programmable common sense**: judgment as a primitive your code can branch on, not a prompt-and-parse loop
