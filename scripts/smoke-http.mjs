@@ -16,6 +16,7 @@ probe.listen(0, "127.0.0.1");
 await once(probe, "listening");
 const port = probe.address().port;
 probe.close();
+await once(probe, "close");
 
 const proc = spawn(process.execPath, ["server.mjs"], {
   env: { ...process.env, JUDGE_TRANSPORT: "http", HTTP_PORT: String(port) },
