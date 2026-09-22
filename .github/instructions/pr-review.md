@@ -40,6 +40,14 @@ When reviewing `.github/workflows/` changes:
 - One happy path and one edge case per behavior; do not flag missing tests for behaviors
   already covered by existing tests.
 
+## Audit docs
+
+For changes under `docs/audit/`:
+
+- Verify filename follows `YYYY-MM-DD-slug.md` and the document follows the existing audit format (see AGENTS.md "Audits").
+- Flag rewrites of findings or verdicts in historical audits; only formatting fixes and dated follow-up notes are allowed.
+- "See Also" cross-links between audit docs are the one exception to the relative-links rule below; do not flag them.
+
 ## Markdown Links
 
 Flag relative links in Markdown files (e.g., `[text](CONTRIBUTING.md)` or `[text](../docs/foo.md)`). All links must be absolute URLs so they resolve correctly in GitHub release notes, forks, and mirrored docs.

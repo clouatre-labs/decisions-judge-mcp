@@ -40,13 +40,11 @@ Release is exactly two steps:
 
 ## Audits
 
-Point-in-time audit records live in `docs/audit/`, one document per review, named `YYYY-MM-DD-slug.md` (e.g. `2026-09-22-code-review.md`). Conventions, aligned with `clouatre-labs/aptu-coder`'s `docs/audit/`:
+Audit records live in `docs/audit/` as `YYYY-MM-DD-slug.md`. Follow the existing docs for format (metadata block, Purpose, Methodology, Findings, Summary Table, reproduction commands). Rules:
 
-- Header: `# Audit: <Title> -- <Month Year>`, followed by a metadata block with trailing double-spaces: `Date`, `Commit` (audited HEAD short hash), `Version`, `Toolchain` (Node/npm and key dependency versions actually installed).
-- Sections: `## See Also` (cross-links to related audits), `## Purpose` (why and scope), `## Methodology` (how findings were verified, with the verdict vocabulary defined inline: **CONFIRMED** / **PARTIAL** / **REFUTED**; extend only with justification, e.g. RE-CONFIRMED, CONFIRMED-benign), `## Findings` (`### F<N> -- <VERDICT> -- <one-line claim>` with Files/Fix per finding), `## Summary Table`, and a verification or reproduction section with exact commands and observed output.
-- Verify claims against installed package sources and the live tree, never training data; record line references.
-- Historical audit documents are immutable records: never rewrite findings or verdicts retroactively. Formatting/nomenclature normalization and factual follow-up notes (e.g. a dated remediation note) are allowed.
-- Every audit-changing commit follows the standard commit rules (GPG + DCO); `npx markdownlint-cli2 "**/*.md"` must pass.
+- Verdicts: CONFIRMED / PARTIAL / REFUTED, defined inline in Methodology.
+- Verify claims against installed package sources and the live tree, never training data.
+- Historical audits are immutable: formatting fixes and dated follow-up notes only.
 
 ## Design references
 
