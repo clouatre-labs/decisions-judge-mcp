@@ -132,7 +132,10 @@ async function judgeHandler({ state, questions, timeout_ms, model }, ctx) {
       err && err.message ? err.message : "question construction failed",
     );
   }
-  if (JSON.stringify({ state: cleanState, questions: cleanQuestions }).length > MAX_PAYLOAD_BYTES) {
+  // Serialize once and measure UTF-8 bytes (Buffer.byteLength), not UTF-16
+  // code units, so non-ASCII payloads cannot slip past the cap.
+  const serialized = JSON.stringify({ state: cleanState, questions: cleanQuestions });
+  if (Buffer.byteLength(serialized, "utf8") > MAX_PAYLOAD_BYTES) {
     return fallbackEnvelope("payload exceeds 256 KiB limit");
   }
   const dispatch =
