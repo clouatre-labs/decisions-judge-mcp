@@ -38,6 +38,16 @@ Release is exactly two steps:
 - Never modify the release workflow as part of a release; workflow changes go through their own reviewed PR outside a release window.
 - The "Bypassed rule violations" audit event on tag push is expected: the Release Tag Protection ruleset grants admins a deliberate `always` bypass; the audit event is the trail. See CONTRIBUTING.md.
 
+## Audits
+
+Point-in-time audit records live in `docs/audit/`, one document per review, named `YYYY-MM-DD-slug.md` (e.g. `2026-09-22-code-review.md`). Conventions, aligned with `clouatre-labs/aptu-coder`'s `docs/audit/`:
+
+- Header: `# Audit: <Title> -- <Month Year>`, followed by a metadata block with trailing double-spaces: `Date`, `Commit` (audited HEAD short hash), `Version`, `Toolchain` (Node/npm and key dependency versions actually installed).
+- Sections: `## See Also` (cross-links to related audits), `## Purpose` (why and scope), `## Methodology` (how findings were verified, with the verdict vocabulary defined inline: **CONFIRMED** / **PARTIAL** / **REFUTED**; extend only with justification, e.g. RE-CONFIRMED, CONFIRMED-benign), `## Findings` (`### F<N> -- <VERDICT> -- <one-line claim>` with Files/Fix per finding), `## Summary Table`, and a verification or reproduction section with exact commands and observed output.
+- Verify claims against installed package sources and the live tree, never training data; record line references.
+- Historical audit documents are immutable records: never rewrite findings or verdicts retroactively. Formatting/nomenclature normalization and factual follow-up notes (e.g. a dated remediation note) are allowed.
+- Every audit-changing commit follows the standard commit rules (GPG + DCO); `npx markdownlint-cli2 "**/*.md"` must pass.
+
 ## Design references
 
 - CONTRIBUTING.md
