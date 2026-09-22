@@ -5,7 +5,7 @@
 // non-zero on any failure or timeout. Does not require TYPESAFE_API_KEY (the
 // key is only needed for actual judge calls).
 import { spawn } from "node:child_process";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { once } from "node:events";
 
 const TIMEOUT_MS = 10_000;
@@ -138,8 +138,103 @@ if (oversized.status !== 413) {
   fail(`oversized POST /mcp returned status ${oversized.status}, expected 413`);
 }
 
+// 1. Mid-request client disconnect: fire a POST and destroy the socket
+// before the response arrives. The handler wires an AbortController to the
+// response "close" event, so the in-flight work must abort and the server
+// must stay healthy for the next request.
+await new Promise((resolve) => {
+  const req = httpRequest(
+    {
+      host: "127.0.0.1",
+      port,
+      path: "/mcp",
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+    },
+    (res) => res.resume(),
+  );
+  req.on("error", () => {}); // expected: socket destroyed client-side
+  req.end(JSON.stringify(request), () => req.destroy());
+  // The destroy resolves independently of any response; give the server a
+  // moment to observe the closed socket, then move on.
+  setTimeout(resolve, 250);
+});
+
+// 2. Malformed JSON-RPC payload must produce a well-formed JSON-RPC error
+// response (jsonrpc field plus error object), never a crash or hang.
+const malformed = await fetch(`http://127.0.0.1:${port}/mcp`, {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+  },
+  body: "{not valid json",
+}).catch((err) => fail(`malformed POST /mcp failed: ${err.message}`));
+const malformedText = await malformed.text();
+let malformedMsg;
+try {
+  malformedMsg = JSON.parse(malformedText);
+} catch {
+  fail(`malformed body response is not JSON: ${malformedText.slice(0, 200)}`);
+}
+if (malformedMsg.jsonrpc !== "2.0" || !malformedMsg.error) {
+  fail(
+    `malformed body did not yield a JSON-RPC error response: ${malformedText.slice(0, 200)}`,
+  );
+}
+
+// 3. Failure after response headers are committed: read part of an SSE
+// initialize response, then destroy the socket mid-stream. The handler must
+// destroy the connection (the #57 fix) rather than append a JSON error body,
+// and must stay healthy afterwards.
+await new Promise((resolve, reject) => {
+  const req = httpRequest(
+    {
+      host: "127.0.0.1",
+      port,
+      path: "/mcp",
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+    },
+    (res) => {
+      // Headers are committed; consume a chunk then tear down the socket.
+      res.once("data", () => {
+        res.destroy();
+        req.destroy();
+        resolve();
+      });
+      res.on("error", () => resolve()); // expected on destroy
+    },
+  );
+  req.on("error", () => resolve()); // expected on destroy
+  req.end(JSON.stringify(request));
+  setTimeout(() => resolve(), 5000);
+}).catch((err) => fail(`mid-stream disconnect case failed: ${err.message}`));
+
+// Liveness check: after all three adversarial exchanges the server must
+// still answer a fresh initialize with 200.
+const healthy = await fetch(`http://127.0.0.1:${port}/mcp`, {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+  },
+  body: JSON.stringify(request),
+}).catch((err) => fail(`post-abuse liveness POST failed: ${err.message}`));
+if (healthy.status !== 200) {
+  fail(`post-abuse liveness POST returned ${healthy.status}, expected 200`);
+}
+// Drain the liveness response body so the socket is released.
+await healthy.arrayBuffer().catch((err) => fail(`liveness drain failed: ${err.message}`));
+
 console.log(
-  `smoke-http: OK (server ${result.serverInfo.name}@${result.serverInfo.version}, initialize 200, GET 405, oversized 413)`,
+  `smoke-http: OK (server ${result.serverInfo.name}@${result.serverInfo.version}, initialize 200, GET 405, oversized 413, disconnect survived, malformed JSON-RPC error, mid-stream destroy survived)`,
 );
 proc.kill("SIGKILL");
 process.exit(0);
