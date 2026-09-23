@@ -25,7 +25,7 @@ concurrency:
 jobs:
   verify-tag-signature:
     name: Verify Tag Signature
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     permissions:
       contents: read
     if: github.event_name != 'workflow_dispatch'
@@ -71,7 +71,7 @@ jobs:
     name: Create Release
     needs: verify-tag-signature
     if: always() && (needs.verify-tag-signature.result == 'success' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     permissions:
       contents: write
     steps:
@@ -105,7 +105,7 @@ jobs:
     name: Publish to npm
     needs: [verify-tag-signature, create-release]
     if: always() && needs.verify-tag-signature.result == 'success' && needs.create-release.result == 'success'
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     environment: npm-publish
     permissions:
       contents: read

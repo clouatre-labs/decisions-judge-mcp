@@ -14,7 +14,7 @@ permissions: {}
 jobs:
   commitlint:
     name: Lint Commits
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     if: github.event_name == 'pull_request'
     timeout-minutes: 5
     permissions:
@@ -42,7 +42,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 10
     permissions:
       contents: read
@@ -72,7 +72,7 @@ jobs:
 
   lint-docs:
     name: Lint Docs
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 5
     permissions:
       contents: read
@@ -88,7 +88,7 @@ jobs:
 
   ci-result:
     name: CI Result
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     if: always()
     permissions: {}
     needs: [commitlint, test, lint-docs]
