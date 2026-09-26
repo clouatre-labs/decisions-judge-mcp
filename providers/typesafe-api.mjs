@@ -49,6 +49,13 @@ function getClient(key) {
   return client;
 }
 
+// Rate-limit test shared by fallbackFrom and the rotation loop: only 429 maps
+// to RateLimitError in the SDK; 529 arrives as a generic error with .status,
+// so the status checks are load-bearing.
+export function isRateLimit(err) {
+  return err instanceof RateLimitError || err?.status === 429 || err?.status === 529;
+}
+
 export function envelope(payload) {
   return {
     structuredContent: payload,
@@ -65,8 +72,7 @@ export function fallbackEnvelope(error) {
 // actionable retry-soon text (with the server's retryAfterMs when provided);
 // other API errors append " (HTTP N)" when err.status is a number.
 export function fallbackFrom(err, defaultMessage) {
-  const isRateLimit = err instanceof RateLimitError || err?.status === 429 || err?.status === 529;
-  if (isRateLimit) {
+  if (isRateLimit(err)) {
     let message = "rate limited - retry shortly";
     if (typeof err?.retryAfterMs === "number") message += ` (retry after ${err.retryAfterMs}ms)`;
     if (typeof err?.status === "number") message += ` (HTTP ${err.status})`;
@@ -131,8 +137,7 @@ export async function typesafeJudge({ state, questions, timeout_ms, model }, ctx
       });
     } catch (err) {
       lastErr = err;
-      const rateLimited = err instanceof RateLimitError || err?.status === 429 || err?.status === 529;
-      if (!rateLimited) return fallbackFrom(err, "typesafe request failed");
+      if (!isRateLimit(err)) return fallbackFrom(err, "typesafe request failed");
     }
   }
   return fallbackFrom(lastErr, "typesafe request failed");
