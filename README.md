@@ -172,7 +172,44 @@ disconnects.
 | `choice` | `{option: description\|null}` | winning option name |
 | `score` | ordered array of level descriptions | best matching level |
 
-Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failure — failures never block agent workflows.
+Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failure — failures never block agent workflows. A `noul` answer is a probability, not a verdict: pick your own action threshold in the caller (e.g. proceed only above 0.7).
+
+## Writing good questions
+
+Jev answers short, well-framed questions better than terse ones. A working reference implementation ([LamplighterPaul/jev-piano](https://github.com/LamplighterPaul/jev-piano)) demonstrates the idiom.
+
+Four patterns, all applicable to the three question types (`noul`, `choice`, `score`):
+
+1. **One decision per question ID.** Each entry in `questions` asks exactly one concept. Don't bundle "is it correct and should we ship it" into a single `noul` — ask two questions.
+2. **Descriptive criteria strings.** Every choice option is described by its own intrinsic properties and trade-offs, never by position, index, or an endorsement of the desired answer. Describing one option as "lowest risk" and its rivals as problems is a hint; describing each option's genuine trade-off is not. The model should reach the answer from the state plus balanced descriptions.
+3. **Inline state framing.** Name the relevant state inside the question text ("It is a G7 chord, moving next to Cm...") rather than relying on the caller to correlate a separate `state` blob. The `state` field is still sent — inline framing just makes each question self-contained.
+4. **Distinct framing per role, one step ahead.** The same kind of decision at different points gets differently phrased questions (e.g. opening vs. closing), because the decision's job differs. When sequencing matters, ask what the next decision should *prepare for* — without that, decisions collapse onto the default option.
+
+Concrete example, rewritten from the terse version in [Example](#example) to follow the idiom:
+
+```jsonc
+// judge tool call
+{
+  "state": { "tests": "passing", "lint": "clean", "filesChanged": 3, "reviewComments": 0, "branchAgeDays": 2, "behindMainBy": 7 },
+  "questions": {
+    "ready_to_merge": {
+      "type": "noul",
+      "instructions": "CI is green (tests passing, lint clean), 3 files changed, and no review comments are open. Is this change safe to merge to main right now?"
+    },
+    "next_step": {
+      "type": "choice",
+      "instructions": "The branch is 2 days old and has drifted 7 commits behind main. What should the agent do next?",
+      "criteria": {
+        "merge": "rebase onto main and create the merge commit now, while CI is green",
+        "iterate": "continue refining on the branch before any integration step",
+        "escalate": "hand the decision back to the human with a summary of the state"
+      }
+    }
+  }
+}
+```
+
+Note what changed: the state is restated inline and consistently, the criteria are balanced, and the framing names the role of this decision — each rule applied once, concretely.
 
 ## Providers
 
