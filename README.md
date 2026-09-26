@@ -172,11 +172,11 @@ disconnects.
 | `choice` | `{option: description\|null}` | winning option name |
 | `score` | ordered array of level descriptions | best matching level |
 
-Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failure — failures never block agent workflows.
+Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failure — failures never block agent workflows. A `noul` answer is a probability, not a verdict: pick your own action threshold in the caller (e.g. proceed only above 0.7).
 
 ## Writing good questions
 
-Jev answers short, well-framed questions better than terse ones. A working reference implementation ([LamplighterPaul/jev-piano](https://github.com/LamplighterPaul/jev-piano), a production Jev consumer) demonstrates the idiom; its question harness is prior art for everything below.
+Jev answers short, well-framed questions better than terse ones. A working reference implementation ([LamplighterPaul/jev-piano](https://github.com/LamplighterPaul/jev-piano)) demonstrates the idiom.
 
 Four patterns, all applicable to the three question types (`noul`, `choice`, `score`):
 
@@ -209,7 +209,7 @@ Concrete example, rewritten from the terse version in [Example](#example) to fol
 }
 ```
 
-Note what changed: the `noul` question restates the state inline so it stands alone, and every fact it names (branch age, drift) also appears in the `state` object — the two stay consistent; each `choice` criterion describes only that option's intrinsic properties and what doing it entails, with no endorsement of which one is "right"; and the framing names the role (green but drifted branch) that makes this decision different from the same question asked earlier in a task.
+Note what changed: the state is restated inline and consistently, the criteria are balanced, and the framing names the role of this decision — each rule applied once, concretely.
 
 ## Providers
 
