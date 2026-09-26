@@ -5,6 +5,7 @@
 // require TYPESAFE_API_KEY.
 import { spawn } from "node:child_process";
 import { cloudflareJudge } from "../providers/cloudflare-workers-ai.mjs";
+import { fallbackFrom, parseKeys, typesafeJudge } from "../providers/typesafe-api.mjs";
 
 const TIMEOUT_MS = 10_000;
 
@@ -207,6 +208,203 @@ async function runOfflineCloudflareTests() {
   }
 }
 
+// Offline typesafe coverage: typesafeJudge reads keys and clients from
+// providers/typesafe-api.mjs, whose per-key SDK clients default to the global
+// fetch -- so stubbing globalThis.fetch with real Response objects exercises
+// rotation and fallback without network access.
+async function runOfflineTypesafeTests() {
+  const savedEnv = {};
+  for (const name of Object.keys(process.env)) {
+    if (name === "TYPESAFE_API_KEYS" || /^TYPESAFE_API_KEY(_\d+)?$/.test(name)) {
+      savedEnv[name] = process.env[name];
+      delete process.env[name];
+    }
+  }
+  const savedFetch = globalThis.fetch;
+  const json = (body, status) =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  const SUCCESS = {
+    answers: { is_bug: { type: "noul", noul: 0.9 } },
+    model: "jev-latest",
+    usage: { input_tokens: 1, output_tokens: 1 },
+  };
+  try {
+    // Happy path: first key rate-limited (429, no SDK retry), second key
+    // succeeds -- no fallback envelope.
+    {
+      process.env.TYPESAFE_API_KEYS = "k1, k2";
+      const calls = [];
+      globalThis.fetch = async () => {
+        calls.push(1);
+        return calls.length === 1
+          ? json({ message: "slow down" }, 429)
+          : json(SUCCESS, 200);
+      };
+      const out = (await typesafeJudge({ ...judgeArgs })).structuredContent;
+      if (out.fallback !== false || out.answers?.is_bug?.noul !== 0.9) {
+        fail(`typesafe rotation: unexpected result ${JSON.stringify(out)}`);
+      }
+      if (calls.length !== 2) {
+        fail(`typesafe rotation: expected 2 fetch calls, got ${calls.length}`);
+      }
+      ok("typesafe rotation on 429 to second key");
+    }
+
+    // Edge case: every key rate-limited -> fallback with actionable text;
+    // 429 must not be retried per-client (one call per key).
+    {
+      process.env.TYPESAFE_API_KEYS = "k1, k2";
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls++;
+        return json({ message: "slow down" }, 429);
+      };
+      const out = (await typesafeJudge({ ...judgeArgs })).structuredContent;
+      if (out.fallback !== true || !/rate limited/i.test(out.error ?? "")) {
+        fail(`typesafe all-429: expected rate-limit fallback, got ${JSON.stringify(out)}`);
+      }
+      if (calls !== 2) {
+        fail(`typesafe all-429: expected exactly 2 calls (no SDK 429 retry), got ${calls}`);
+      }
+      ok(`typesafe all keys rate-limited fallback (${out.error})`);
+    }
+
+    // Edge case: single key rate-limited with retryAfterMs -> one call,
+    // fallback text includes the retry hint and status.
+    {
+      delete process.env.TYPESAFE_API_KEYS;
+      process.env.TYPESAFE_API_KEY = "solo";
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls++;
+        return new Response(JSON.stringify({ message: "slow down" }), {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after-ms": "250" },
+        });
+      };
+      const out = (await typesafeJudge({ ...judgeArgs })).structuredContent;
+      if (out.fallback !== true || !/retry after 250ms/.test(out.error ?? "") || !/HTTP 429/.test(out.error ?? "")) {
+        fail(`typesafe single-key 429: expected retry-after text, got ${JSON.stringify(out)}`);
+      }
+      if (calls !== 1) fail(`typesafe single-key 429: expected 1 call, got ${calls}`);
+      ok(`typesafe single-key 429 with retryAfterMs (${out.error})`);
+    }
+
+    // Edge case: non-429 errors are NOT rotated -- immediate generic fallback.
+    {
+      process.env.TYPESAFE_API_KEYS = "k1, k2";
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls++;
+        return json({ message: "unauthorized" }, 401);
+      };
+      const out = (await typesafeJudge({ ...judgeArgs })).structuredContent;
+      if (out.fallback !== true || !/HTTP 401/.test(out.error ?? "")) {
+        fail(`typesafe 401: expected generic fallback, got ${JSON.stringify(out)}`);
+      }
+      if (calls !== 1) fail(`typesafe 401: expected 1 call, got ${calls}`);
+      ok("typesafe non-429 error returns generic fallback without rotation");
+    }
+
+    // Edge case: fallbackFrom mapping -- 429 yields rate-limit text;
+    // non-429 APIError keeps the generic (HTTP N) form.
+    {
+      const rl = fallbackFrom({ status: 429, message: "ignored" }, "d");
+      if (rl.structuredContent.error !== "rate limited - retry shortly (HTTP 429)") {
+        fail(`fallbackFrom 429: got ${rl.structuredContent.error}`);
+      }
+      const generic = fallbackFrom({ status: 500, message: "boom" }, "d");
+      if (generic.structuredContent.error !== "boom (HTTP 500)") {
+        fail(`fallbackFrom generic: got ${generic.structuredContent.error}`);
+      }
+      const defaultMsg = fallbackFrom({}, "typesafe request failed");
+      if (defaultMsg.structuredContent.error !== "typesafe request failed") {
+        fail(`fallbackFrom default: got ${defaultMsg.structuredContent.error}`);
+      }
+      ok("fallbackFrom 429 vs generic mapping");
+    }
+
+    // Edge case: key parsing normalizes empty/whitespace CSV segments and
+    // dedupes; TYPESAFE_API_KEY_2..9 fill in when the CSV var is unset.
+    {
+      if (parseKeys({ TYPESAFE_API_KEYS: " a , , b ,, a " }).join(",") !== "a,b") {
+        fail(`parseKeys CSV: got ${JSON.stringify(parseKeys({ TYPESAFE_API_KEYS: " a , , b ,, a " }))}`);
+      }
+      if (parseKeys({ TYPESAFE_API_KEY: " a ", TYPESAFE_API_KEY_3: " c ", TYPESAFE_API_KEY_2: "" }).join(",") !== "a,c") {
+        fail("parseKeys fallback vars: unexpected key list");
+      }
+      if (parseKeys({}).length !== 0) fail("parseKeys empty: expected no keys");
+      if (parseKeys({ TYPESAFE_API_KEYS: "   " }).length !== 0) {
+        fail("parseKeys whitespace CSV: expected no keys");
+      }
+      ok("parseKeys normalization and precedence");
+    }
+  } finally {
+    globalThis.fetch = savedFetch;
+    for (const name of Object.keys(process.env)) {
+      if (name === "TYPESAFE_API_KEYS" || /^TYPESAFE_API_KEY(_\d+)?$/.test(name)) delete process.env[name];
+    }
+    for (const [name, value] of Object.entries(savedEnv)) process.env[name] = value;
+  }
+}
+
+// HTTP routing: GET /health returns 200 with provider/transport/keys; GET
+// /mcp stays 405; unknown paths stay 404.
+async function runHttpRoutingTest() {
+  const PORT = 18471;
+  const env = { ...process.env, JUDGE_TRANSPORT: "http", HTTP_HOST: "127.0.0.1", HTTP_PORT: String(PORT) };
+  delete env.TYPESAFE_API_KEYS;
+  delete env.TYPESAFE_API_KEY;
+  env.JUDGE_PROVIDER = "typesafe-api";
+  delete env.CLOUDFLARE_API_TOKEN;
+  delete env.CLOUDFLARE_ACCOUNT_ID;
+  const proc = spawn(process.execPath, ["server.mjs"], {
+    stdio: ["ignore", "ignore", "inherit"],
+    env,
+  });
+  const base = `http://127.0.0.1:${PORT}`;
+  const deadline = Date.now() + TIMEOUT_MS;
+  async function waitForServer() {
+    while (Date.now() < deadline) {
+      try {
+        const res = await fetch(`${base}/health`);
+        if (res.status === 200) return res;
+      } catch {}
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return null;
+  }
+  async function run() {
+    const health = await waitForServer();
+    if (!health) {
+      proc.kill("SIGKILL");
+      fail("http routing: /health did not come up within timeout");
+    }
+    const payload = await health.json();
+    if (payload.provider !== "typesafe-api" || payload.transport !== "http" || payload.keys !== 0) {
+      fail(`http routing: unexpected /health payload ${JSON.stringify(payload)}`);
+    }
+    const mcpGet = await fetch(`${base}/mcp`, { method: "GET" });
+    if (mcpGet.status !== 405) fail(`http routing: GET /mcp expected 405, got ${mcpGet.status}`);
+    const unknown = await fetch(`${base}/nope`);
+    if (unknown.status !== 404) fail(`http routing: unknown path expected 404, got ${unknown.status}`);
+    const mcpPost = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "t", version: "0" } } }),
+    });
+    if (mcpPost.status !== 200) fail(`http routing: POST /mcp expected 200, got ${mcpPost.status}`);
+    proc.kill("SIGKILL");
+    ok("http routing: /health 200, /mcp GET 405, unknown 404, /mcp POST intact");
+  }
+  try {
+    await run();
+  } catch (err) {
+    proc.kill("SIGKILL");
+    fail(`http routing: ${err.message}`);
+  }
+}
+
 // Startup-failure assertions: spawn node server.mjs with a controlled env and
 // require a non-zero exit with the offending variable named on stderr.
 function runStartupFailureCase(label, envOverrides, expectPattern) {
@@ -255,6 +453,9 @@ function runStdioDefaultPathTest() {
   delete env.CLOUDFLARE_API_TOKEN;
   delete env.CLOUDFLARE_ACCOUNT_ID;
   delete env.JUDGE_PROVIDER;
+  delete env.TYPESAFE_API_KEYS;
+  delete env.TYPESAFE_API_KEY;
+  for (let i = 2; i <= 9; i++) delete env[`TYPESAFE_API_KEY_${i}`];
   const proc = spawn(process.execPath, ["server.mjs"], {
     stdio: ["pipe", "pipe", "inherit"],
     env,
@@ -396,6 +597,10 @@ function runStdioDefaultPathTest() {
 }
 
 await runOfflineCloudflareTests();
+
+await runOfflineTypesafeTests();
+
+await runHttpRoutingTest();
 
 await runStartupFailureCase(
   "missing CLOUDFLARE_API_TOKEN",

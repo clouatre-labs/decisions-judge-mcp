@@ -40,6 +40,8 @@ JUDGE_TRANSPORT=http HTTP_HOST=127.0.0.1 HTTP_PORT=8080 npx -y decisions-judge-m
 
 Serving is stateless: each request is handled independently, with no protocol-level sessions (`GET`/`DELETE` on `/mcp` return 405).
 
+A `GET /health` endpoint returns `200` with `{provider, transport, keys}` for liveness checks; it does not shadow `/mcp` routing.
+
 **Security warning:** the HTTP endpoint is unauthenticated. Production remote deployments must be fronted by an authenticating OAuth 2.1 proxy per the MCP 2026-07-28 authorization specification.
 
 ## Demo
@@ -94,7 +96,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to regenerate the demo.
 
 ## Quickstart
 
-Requires Node >= 20 and `TYPESAFE_API_KEY` in the environment.
+Requires Node >= 20 and at least one TypeSafe API key in the environment via `TYPESAFE_API_KEYS`, `TYPESAFE_API_KEY`, or `TYPESAFE_API_KEY_2` .. `TYPESAFE_API_KEY_9`.
 
 ```sh
 npx -y decisions-judge-mcp          # latest
@@ -105,7 +107,7 @@ npx -y decisions-judge-mcp@1.3.0    # pinned, for supply-chain reproducibility
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `TYPESAFE_API_KEY` | yes for `typesafe-api` | — | TypeSafe API key, used by the default `typesafe-api` provider |
+| `TYPESAFE_API_KEY` \| `TYPESAFE_API_KEYS` \| `TYPESAFE_API_KEY_2` .. `TYPESAFE_API_KEY_9` | one of these for `typesafe-api` | — | TypeSafe API key(s), used by the default `typesafe-api` provider. `TYPESAFE_API_KEYS` (comma-separated, tried in order with rotation on rate limits 429/529) takes precedence over `TYPESAFE_API_KEY` / `TYPESAFE_API_KEY_N`; the numbered vars fill in after `TYPESAFE_API_KEY` when `TYPESAFE_API_KEYS` is unset |
 | `JUDGE_PROVIDER` | no | `typesafe-api` | Provider selector: `typesafe-api` or `cloudflare-workers-ai`. Read once at startup |
 | `CLOUDFLARE_API_TOKEN` | only for `cloudflare-workers-ai` | — | Cloudflare token with `Account -> Workers AI -> Edit` permission |
 | `CLOUDFLARE_ACCOUNT_ID` | only for `cloudflare-workers-ai` | — | 32-character hex Cloudflare account id |
@@ -113,6 +115,11 @@ npx -y decisions-judge-mcp@1.3.0    # pinned, for supply-chain reproducibility
 Invalid `JUDGE_PROVIDER` values, or `cloudflare-workers-ai` selected with missing
 Cloudflare credentials, fail fast at startup (non-zero exit naming the offending
 variable).
+
+Selecting `typesafe-api` with no key configured prints a startup warning (the
+server still runs; judge calls return fallback envelopes) instead of exiting.
+When multiple keys are configured, a rate-limited request (HTTP 429/529) is
+rotated to the next key before any fallback envelope is returned.
 
 ## MCP client configuration
 
@@ -215,7 +222,7 @@ Note what changed: the state is restated inline and consistently, the criteria a
 
 Selected once at startup via `JUDGE_PROVIDER` (default `typesafe-api`). The judge tool's schema and behavior are identical under both providers.
 
-- `typesafe-api` (default): uses `TYPESAFE_API_KEY` via `@typesafe-ai/sdk`.
+- `typesafe-api` (default): uses `@typesafe-ai/sdk` with one or more TypeSafe API keys (`TYPESAFE_API_KEYS` CSV, `TYPESAFE_API_KEY`, or `TYPESAFE_API_KEY_2` .. `TYPESAFE_API_KEY_9`); keys are tried in order with rotation on rate limits. See [Configuration](#configuration) for details.
 - `cloudflare-workers-ai`: routes the same Jev model through Cloudflare Workers AI; requires the two Cloudflare variables above.
 
 Billing gotcha: `typesafe/jev` is a partner model on Cloudflare, so runs are metered from the **AI Gateway prepaid credit balance**, not the account's payment card. Accounts with a valid card but zero credit balance get HTTP 402 (error 2021, "Insufficient balance"); top up AI Gateway prepaid credit before calling.
