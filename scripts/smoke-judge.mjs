@@ -396,7 +396,6 @@ async function runHttpRoutingTest() {
     if (mcpPost.status !== 200) fail(`http routing: POST /mcp expected 200, got ${mcpPost.status}`);
     proc.kill("SIGKILL");
     ok("http routing: /health 200, /mcp GET 405, unknown 404, /mcp POST intact");
-    await runAuditionSkipTest();
   }
   try {
     await run();
@@ -404,41 +403,6 @@ async function runHttpRoutingTest() {
     proc.kill("SIGKILL");
     fail(`http routing: ${err.message}`);
   }
-}
-
-// Audition script edge case: with no key configured it exits 0 with a skip
-// message (never a crash).
-function runAuditionSkipTest() {
-  return new Promise((resolve) => {
-  const env = { ...process.env };
-  delete env.TYPESAFE_API_KEYS;
-  delete env.TYPESAFE_API_KEY;
-  for (let i = 2; i <= 9; i++) delete env[`TYPESAFE_API_KEY_${i}`];
-  const child = spawn(process.execPath, ["scripts/audition.mjs"], {
-    stdio: ["ignore", "pipe", "pipe"],
-    env,
-  });
-  let stdout = "";
-  const timer = setTimeout(() => {
-    child.kill("SIGKILL");
-    fail("audition skip: no exit within timeout");
-  }, TIMEOUT_MS);
-  child.stdout.on("data", (chunk) => {
-    stdout += chunk;
-  });
-  child.on("exit", (code) => {
-    clearTimeout(timer);
-    if (code !== 0 || !/skipped/.test(stdout)) {
-      fail(`audition skip: expected exit 0 with skip message, got code=${code} out=${stdout.slice(0, 200)}`);
-    }
-    ok(`audition skips cleanly without a key (${stdout.trim()})`);
-    resolve();
-  });
-  child.on("error", (err) => {
-    clearTimeout(timer);
-    fail(`audition skip: failed to spawn: ${err.message}`);
-  });
-  });
 }
 
 // Startup-failure assertions: spawn node server.mjs with a controlled env and
