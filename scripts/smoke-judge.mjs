@@ -350,7 +350,7 @@ async function runOfflineTypesafeTests() {
 
 // HTTP routing: GET /health returns 200 with provider/transport/keys; GET
 // /mcp stays 405; unknown paths stay 404.
-function runHttpRoutingTest() {
+async function runHttpRoutingTest() {
   const PORT = 18471;
   const env = { ...process.env, JUDGE_TRANSPORT: "http", HTTP_HOST: "127.0.0.1", HTTP_PORT: String(PORT) };
   delete env.TYPESAFE_API_KEYS;
@@ -371,7 +371,7 @@ function runHttpRoutingTest() {
     }
     return null;
   }
-  (async () => {
+  async function run() {
     const health = await waitForServer();
     if (!health) {
       proc.kill("SIGKILL");
@@ -393,16 +393,20 @@ function runHttpRoutingTest() {
     if (mcpPost.status !== 200) fail(`http routing: POST /mcp expected 200, got ${mcpPost.status}`);
     proc.kill("SIGKILL");
     ok("http routing: /health 200, /mcp GET 405, unknown 404, /mcp POST intact");
-    runAuditionSkipTest();
-  })().catch((err) => {
+    await runAuditionSkipTest();
+  }
+  try {
+    await run();
+  } catch (err) {
     proc.kill("SIGKILL");
     fail(`http routing: ${err.message}`);
-  });
+  }
 }
 
 // Audition script edge case: with no key configured it exits 0 with a skip
 // message (never a crash).
 function runAuditionSkipTest() {
+  return new Promise((resolve) => {
   const env = { ...process.env };
   delete env.TYPESAFE_API_KEYS;
   delete env.TYPESAFE_API_KEY;
@@ -425,11 +429,12 @@ function runAuditionSkipTest() {
       fail(`audition skip: expected exit 0 with skip message, got code=${code} out=${stdout.slice(0, 200)}`);
     }
     ok(`audition skips cleanly without a key (${stdout.trim()})`);
-    process.exit(0);
+    resolve();
   });
   child.on("error", (err) => {
     clearTimeout(timer);
     fail(`audition skip: failed to spawn: ${err.message}`);
+  });
   });
 }
 
@@ -628,7 +633,7 @@ await runOfflineCloudflareTests();
 
 await runOfflineTypesafeTests();
 
-runHttpRoutingTest();
+await runHttpRoutingTest();
 
 await runStartupFailureCase(
   "missing CLOUDFLARE_API_TOKEN",

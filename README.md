@@ -96,7 +96,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to regenerate the demo.
 
 ## Quickstart
 
-Requires Node >= 20 and `TYPESAFE_API_KEY` in the environment.
+Requires Node >= 20 and at least one TypeSafe API key in the environment via `TYPESAFE_API_KEYS`, `TYPESAFE_API_KEY`, or `TYPESAFE_API_KEY_2` .. `TYPESAFE_API_KEY_9`.
 
 ```sh
 npx -y decisions-judge-mcp          # latest
@@ -187,7 +187,7 @@ Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failu
 
 Selected once at startup via `JUDGE_PROVIDER` (default `typesafe-api`). The judge tool's schema and behavior are identical under both providers.
 
-- `typesafe-api` (default): uses `TYPESAFE_API_KEY` via `@typesafe-ai/sdk`.
+- `typesafe-api` (default): uses `@typesafe-ai/sdk` with one or more TypeSafe API keys (`TYPESAFE_API_KEYS` CSV, `TYPESAFE_API_KEY`, or `TYPESAFE_API_KEY_2` .. `TYPESAFE_API_KEY_9`); keys are tried in order with rotation on rate limits. See [Configuration](#configuration) for details.
 - `cloudflare-workers-ai`: routes the same Jev model through Cloudflare Workers AI; requires the two Cloudflare variables above.
 
 Billing gotcha: `typesafe/jev` is a partner model on Cloudflare, so runs are metered from the **AI Gateway prepaid credit balance**, not the account's payment card. Accounts with a valid card but zero credit balance get HTTP 402 (error 2021, "Insufficient balance"); top up AI Gateway prepaid credit before calling.
