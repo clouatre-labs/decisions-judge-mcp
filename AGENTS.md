@@ -14,6 +14,11 @@ npm on Node 24; MCP SDK + zod for schema validation.
 # format: npx markdownlint-cli2 --fix "**/*.md"
 ```
 
+## Labels and Milestones
+- Canonical labels reuse the Conventional Commits type vocabulary: `feat`, `fix`, `docs`, `chore`, `refactor`, `ci`, `testing`, `perf`, plus domain labels (`dependencies`, `security`); do not mix in the deleted GitHub synonyms (`enhancement`, `bug`, `documentation`, `github_actions`)
+- Meta labels are kept: `good first issue`, `help wanted`, `duplicate`, `invalid`, `question`, `wontfix`
+- Milestones are theme-based with a due date; close a milestone when its last issue closes; carry-over work moves to the current quarter milestone (e.g. `Q4 2026`)
+
 ## Development standards
 
 - GPG sign and DCO sign-off: `git commit -S --signoff` (every commit)
