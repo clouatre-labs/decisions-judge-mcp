@@ -355,6 +355,9 @@ async function runHttpRoutingTest() {
   const env = { ...process.env, JUDGE_TRANSPORT: "http", HTTP_HOST: "127.0.0.1", HTTP_PORT: String(PORT) };
   delete env.TYPESAFE_API_KEYS;
   delete env.TYPESAFE_API_KEY;
+  env.JUDGE_PROVIDER = "typesafe-api";
+  delete env.CLOUDFLARE_API_TOKEN;
+  delete env.CLOUDFLARE_ACCOUNT_ID;
   const proc = spawn(process.execPath, ["server.mjs"], {
     stdio: ["ignore", "ignore", "inherit"],
     env,

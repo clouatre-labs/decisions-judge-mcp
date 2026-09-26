@@ -107,9 +107,7 @@ npx -y decisions-judge-mcp@1.3.0    # pinned, for supply-chain reproducibility
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `TYPESAFE_API_KEY` | yes for `typesafe-api` | — | TypeSafe API key, used by the default `typesafe-api` provider |
-| `TYPESAFE_API_KEYS` | no | — | Comma-separated TypeSafe API keys; tried in order with rotation on rate limits (429/529). Takes precedence over `TYPESAFE_API_KEY` / `TYPESAFE_API_KEY_N` |
-| `TYPESAFE_API_KEY_2` .. `TYPESAFE_API_KEY_9` | no | — | Additional TypeSafe API keys, tried in numeric order after `TYPESAFE_API_KEY` when `TYPESAFE_API_KEYS` is unset |
+| `TYPESAFE_API_KEY` \| `TYPESAFE_API_KEYS` \| `TYPESAFE_API_KEY_2` .. `TYPESAFE_API_KEY_9` | one of these for `typesafe-api` | — | TypeSafe API key(s), used by the default `typesafe-api` provider. `TYPESAFE_API_KEYS` (comma-separated, tried in order with rotation on rate limits 429/529) takes precedence over `TYPESAFE_API_KEY` / `TYPESAFE_API_KEY_N`; the numbered vars fill in after `TYPESAFE_API_KEY` when `TYPESAFE_API_KEYS` is unset |
 | `JUDGE_PROVIDER` | no | `typesafe-api` | Provider selector: `typesafe-api` or `cloudflare-workers-ai`. Read once at startup |
 | `CLOUDFLARE_API_TOKEN` | only for `cloudflare-workers-ai` | — | Cloudflare token with `Account -> Workers AI -> Edit` permission |
 | `CLOUDFLARE_ACCOUNT_ID` | only for `cloudflare-workers-ai` | — | 32-character hex Cloudflare account id |
