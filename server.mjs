@@ -251,11 +251,8 @@ if (transportName === "http") {
       res.end(JSON.stringify({ error: "not found" }));
       return;
     }
-    if (req.method === "GET" || req.method === "DELETE") {
-      res.writeHead(405, { allow: "POST" });
-      res.end("Method not allowed.");
-      return;
-    }
+    // GET and DELETE on the endpoint are answered 405 per the transport spec
+    // (legacy GET streams removed); so is any other non-POST method.
     if (req.method !== "POST") {
       res.writeHead(405, { allow: "POST" });
       res.end("Method not allowed.");
