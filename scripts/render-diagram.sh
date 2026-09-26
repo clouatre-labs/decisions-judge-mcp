@@ -9,8 +9,12 @@ set -eu
 cd "$(dirname "$0")/.."
 
 files=${*:-}
-[ -n "$files" ] || files=$(ls docs/diagrams/*.excalidraw)
+[ -n "$files" ] || for f in docs/diagrams/*.excalidraw; do
+  [ -e "$f" ] && files="$files $f"
+done
+[ -n "$files" ] || { echo "no .excalidraw files found" >&2; exit 1; }
 
+# shellcheck disable=SC2086 # filenames are repo-controlled, no spaces
 for src in $files; do
   out=${src%.excalidraw}.svg
   curl -fsSL --data-binary @"$src" -H "Content-Type: text/plain" \
