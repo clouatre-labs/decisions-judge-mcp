@@ -33,6 +33,12 @@ x, y, w, h = x - 20, y - 20, w + 40, h + 40
 s = s[:m.start()] + f'viewBox="{x:g} {y:g} {w:g} {h:g}"' + s[m.end():]
 s = re.sub(r'(<svg[^>]*?)width="[\d.]+" height="[\d.]+"',
            rf'\g<1>width="{w:g}" height="{h:g}"', s, count=1)
+# Rounded white background covering the full padded viewBox (shapeshift style).
+bg = f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" rx="24" fill="#ffffff"></rect>'
+if re.search(r'<rect [^>]*fill="#ffffff"', s):
+    s = re.sub(r'<rect [^>]*fill="#ffffff"[^>]*>(</rect>)?', bg, s, count=1)
+else:
+    s = re.sub(r'(<metadata[^>]*></metadata>)', rf'\1{bg}', s, count=1)
 open(path, "w").write(s)
 EOF
   echo "rendered $src -> $out"

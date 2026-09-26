@@ -46,8 +46,6 @@ A `GET /health` endpoint returns `200` with `{provider, transport, keys}` for li
 
 ## Architecture
 
-MCP client → stdio/HTTP server → judge tool → TypeSafe System One (Jev).
-
 ![architecture diagram](docs/diagrams/architecture.svg)
 
 ## Demo
