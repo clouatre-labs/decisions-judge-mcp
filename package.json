@@ -1,6 +1,6 @@
 {
   "name": "decisions-judge-mcp",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Typed decisions for AI agents as an MCP tool: yes/no probability (noul), choice, and score about JSON state in one fast request, with a fallback envelope that never blocks. Backed by the TypeSafe System One model; shared by pi, Claude Code, and goose.",
   "type": "module",
   "bin": {
