@@ -44,6 +44,12 @@ A `GET /health` endpoint returns `200` with `{provider, transport, keys}` for li
 
 **Security warning:** the HTTP endpoint is unauthenticated. Production remote deployments must be fronted by an authenticating OAuth 2.1 proxy per the MCP 2026-07-28 authorization specification.
 
+## Architecture
+
+MCP client → stdio/HTTP server → judge tool → TypeSafe System One (Jev).
+
+![architecture diagram](docs/diagrams/architecture.svg)
+
 ## Demo
 
 ![judge demo](docs/demo.gif)
