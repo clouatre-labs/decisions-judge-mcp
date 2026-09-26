@@ -40,6 +40,8 @@ JUDGE_TRANSPORT=http HTTP_HOST=127.0.0.1 HTTP_PORT=8080 npx -y decisions-judge-m
 
 Serving is stateless: each request is handled independently, with no protocol-level sessions (`GET`/`DELETE` on `/mcp` return 405).
 
+A `GET /health` endpoint returns `200` with `{provider, transport, keys}` for liveness checks; it does not shadow `/mcp` routing.
+
 **Security warning:** the HTTP endpoint is unauthenticated. Production remote deployments must be fronted by an authenticating OAuth 2.1 proxy per the MCP 2026-07-28 authorization specification.
 
 ## Demo
@@ -106,6 +108,8 @@ npx -y decisions-judge-mcp@1.3.0    # pinned, for supply-chain reproducibility
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `TYPESAFE_API_KEY` | yes for `typesafe-api` | — | TypeSafe API key, used by the default `typesafe-api` provider |
+| `TYPESAFE_API_KEYS` | no | — | Comma-separated TypeSafe API keys; tried in order with rotation on rate limits (429/529). Takes precedence over `TYPESAFE_API_KEY` / `TYPESAFE_API_KEY_N` |
+| `TYPESAFE_API_KEY_2` .. `TYPESAFE_API_KEY_9` | no | — | Additional TypeSafe API keys, tried in numeric order after `TYPESAFE_API_KEY` when `TYPESAFE_API_KEYS` is unset |
 | `JUDGE_PROVIDER` | no | `typesafe-api` | Provider selector: `typesafe-api` or `cloudflare-workers-ai`. Read once at startup |
 | `CLOUDFLARE_API_TOKEN` | only for `cloudflare-workers-ai` | — | Cloudflare token with `Account -> Workers AI -> Edit` permission |
 | `CLOUDFLARE_ACCOUNT_ID` | only for `cloudflare-workers-ai` | — | 32-character hex Cloudflare account id |
@@ -113,6 +117,11 @@ npx -y decisions-judge-mcp@1.3.0    # pinned, for supply-chain reproducibility
 Invalid `JUDGE_PROVIDER` values, or `cloudflare-workers-ai` selected with missing
 Cloudflare credentials, fail fast at startup (non-zero exit naming the offending
 variable).
+
+Selecting `typesafe-api` with no key configured prints a startup warning (the
+server still runs; judge calls return fallback envelopes) instead of exiting.
+When multiple keys are configured, a rate-limited request (HTTP 429/529) is
+rotated to the next key before any fallback envelope is returned.
 
 ## MCP client configuration
 

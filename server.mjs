@@ -23,7 +23,8 @@
 // via the shared checks in providers/typesafe-api.mjs. Retries, timeouts, and
 // model resolution (jev-latest) are owned by @typesafe-ai/sdk.
 //
-// Auth: TYPESAFE_API_KEY (SDK standard).
+// Auth: TYPESAFE_API_KEYS (CSV) or TYPESAFE_API_KEY / TYPESAFE_API_KEY_2..9
+// (SDK standard). Rate limits (429/529) rotate to the next configured key.
 //
 // Any failure returns { fallback: true, error: "..." } with exit code 0 --
 // never blocks, never prints the token.
@@ -38,6 +39,7 @@ import {
   envelope,
   fallbackEnvelope,
   fallbackFrom,
+  parseKeys,
   typesafeJudge,
   validateQuestionSpec,
 } from "./providers/typesafe-api.mjs";
@@ -67,6 +69,17 @@ if (provider === "cloudflare-workers-ai") {
     );
     process.exit(1);
   }
+}
+
+// A keyless typesafe-api startup is a warning, not an exit: the stdio MCP
+// handshake must still work (judges will return fallback envelopes) and a
+// key can be supplied later via multi-key env vars.
+if (provider === "typesafe-api" && parseKeys().length === 0) {
+  console.error(
+    "WARNING: JUDGE_PROVIDER=typesafe-api has no key configured. Set TYPESAFE_API_KEYS " +
+      "(CSV) or TYPESAFE_API_KEY / TYPESAFE_API_KEY_2..9; judge calls will return " +
+      "fallback envelopes until a key is present.",
+  );
 }
 
 // EntryType: SDK accepts a string or arbitrary JSON structure.
@@ -225,7 +238,15 @@ if (transportName === "http") {
   // JSON parsing. Slack above MAX_PAYLOAD_BYTES covers the JSON-RPC envelope.
   const MAX_BODY_BYTES = MAX_PAYLOAD_BYTES + 65536;
   const httpServer = createServer(async (req, res) => {
-    if (req.url?.split("?")[0] !== "/mcp") {
+    const path = req.url?.split("?")[0];
+    if (path === "/health" && req.method === "GET") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({ provider, transport: transportName, keys: provider === "typesafe-api" ? parseKeys().length : 1 }),
+      );
+      return;
+    }
+    if (path !== "/mcp") {
       res.writeHead(404, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "not found" }));
       return;
