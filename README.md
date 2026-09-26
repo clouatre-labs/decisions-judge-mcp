@@ -174,6 +174,43 @@ disconnects.
 
 Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failure — failures never block agent workflows.
 
+## Writing good questions
+
+Jev answers short, well-framed questions far better than terse ones. A working reference implementation ([LamplighterPaul/jev-piano](https://github.com/LamplighterPaul/jev-piano), a production Jev consumer) demonstrates the idiom; its question harness is prior art for everything below.
+
+Four patterns, all validated against the three question types (`noul`, `choice`, `score`):
+
+1. **One decision per question ID.** Each entry in `questions` asks exactly one concept. Don't bundle "is it correct and should we ship it" into a single `noul` — ask two questions.
+2. **Descriptive criteria strings.** Every choice option is described by its own intrinsic properties, never by position, index, or a hint about the desired answer. The model should reach the answer from the description alone.
+3. **Inline state framing.** Name the relevant state inside the question text ("It is a G7 chord, moving next to Cm...") rather than relying on the caller to correlate a separate `state` blob. The `state` field is still sent — inline framing just makes each question self-contained.
+4. **Distinct framing per role, one step ahead.** The same kind of decision at different points gets differently phrased questions (e.g. opening vs. closing), because the decision's job differs. When sequencing matters, ask what the next decision should *prepare for* — without that, decisions collapse onto the default option.
+
+Concrete example, rewritten from the terse version in [Example](#example) to follow the idiom:
+
+```jsonc
+// judge tool call
+{
+  "state": { "tests": "passing", "lint": "clean", "filesChanged": 3, "reviewComments": 0 },
+  "questions": {
+    "ready_to_merge": {
+      "type": "noul",
+      "instructions": "CI is green (tests passing, lint clean), 3 files changed, and no review comments are open. Is this change safe to merge to main right now?"
+    },
+    "next_step": {
+      "type": "choice",
+      "instructions": "The change is small and CI is green, but the branch is 2 days old and may have drifted from main. What should the agent do next?",
+      "criteria": {
+        "merge": "rebase onto main and create the merge commit — lowest risk while CI holds",
+        "iterate": "keep refining; something about the change still needs work",
+        "escalate": "hand back to the human — the decision needs context the agent lacks"
+      }
+    }
+  }
+}
+```
+
+Note what changed: the `noul` question restates the state inline so it stands alone; each `choice` criterion describes only that option's intrinsic trade-off, with no hint about which one is "right"; and the framing names the role (small green change, possibly stale branch) that makes this decision different from the same question asked earlier in a task.
+
 ## Providers
 
 Selected once at startup via `JUDGE_PROVIDER` (default `typesafe-api`). The judge tool's schema and behavior are identical under both providers.
