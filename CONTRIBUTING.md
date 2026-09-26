@@ -9,6 +9,10 @@
 
 The README demo is generated from `docs/demo.tape` with [vhs](https://github.com/charmbracelet/vhs), which drives `scripts/demo.mjs`; commit the regenerated `docs/demo.gif`. Note: vhs v0.12.0 is affected by [charmbracelet/vhs#787](https://github.com/charmbracelet/vhs/issues/787) (exits without writing output), so use a build from the fix PR until a patched release. Rendering is offline by default; set `DEMO_LIVE=1` (plus `TYPESAFE_API_KEY`) for a live first scene.
 
+## Diagrams
+
+Architecture diagrams live in `docs/diagrams/`. Each `.svg` is rendered from the co-located `.excalidraw` source: run `scripts/render-diagram.sh` (which posts the source to [kroki.io](https://kroki.io) and pads the resulting viewBox) or render manually with `curl -s --data-binary @docs/diagrams/architecture.excalidraw -H "Content-Type: text/plain" https://kroki.io/excalidraw/svg -o docs/diagrams/architecture.svg`; commit both files together. To edit a diagram, open the `.excalidraw` file at [excalidraw.com](https://excalidraw.com) or with the VS Code Excalidraw extension.
+
 ## Commit conventions
 
 All commits must follow [Conventional Commits](https://www.conventionalcommits.org/):
