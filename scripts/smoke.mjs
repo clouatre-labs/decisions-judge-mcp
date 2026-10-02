@@ -86,7 +86,25 @@ proc.stdout.on("data", (chunk) => {
       if (!m.content.text.includes("claim_supported")) {
         fail(`prompts/get verify-claim text missing claim_supported question key: ${m.content.text.slice(0, 300)}`);
       }
-      console.log("smoke: prompts/get verify-claim OK (user text message, wording-v1, questions rendered)");
+      // The embedded skeleton must parse as JSON whose questions field is an
+      // object map (matching the judge tool's questions record schema), not
+      // an array of single-key objects.
+      const skeletonText = m.content.text.split("\n\n").pop();
+      let parsed;
+      try {
+        parsed = JSON.parse(skeletonText);
+      } catch (err) {
+        fail(`prompts/get verify-claim skeleton is not parseable JSON: ${err.message}`);
+      }
+      if (
+        typeof parsed?.arguments?.questions !== "object" ||
+        parsed.arguments.questions === null ||
+        Array.isArray(parsed.arguments.questions) ||
+        !("claim_supported" in parsed.arguments.questions)
+      ) {
+        fail(`prompts/get verify-claim questions must be an object map with claim_supported: ${skeletonText.slice(0, 200)}`);
+      }
+      console.log("smoke: prompts/get verify-claim OK (user text message, wording-v1, questions rendered as object map)");
       proc.stdin.write(JSON.stringify(rpc(4, "prompts/get", { name: "no-such-prompt", arguments: {} })) + "\n");
     } else if (msg.id === 4) {
       if (!msg.error || typeof msg.error.code !== "number") {

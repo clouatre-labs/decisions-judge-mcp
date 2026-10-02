@@ -191,7 +191,32 @@ if (!pm.content.text.includes('"type": "noul"') && !pm.content.text.includes('"t
 if (!pm.content.text.includes("claim_supported")) {
   fail(`prompts/get verify-claim text missing claim_supported question key: ${pm.content.text.slice(0, 300)}`);
 }
-console.log(`smoke-http: prompts OK (${promptNames.join(", ")}); verify-claim wording-v1, questions rendered`);
+// The embedded skeleton must parse as JSON whose questions field is an
+// object map (matching the judge tool's questions record schema), not
+// an array of single-key objects.
+const skeletonText = pm.content.text.split("\n\n").pop();
+let parsedSkeleton;
+try {
+  parsedSkeleton = JSON.parse(skeletonText);
+} catch (err) {
+  fail(`prompts/get verify-claim skeleton is not parseable JSON: ${err.message}`);
+}
+if (
+  typeof parsedSkeleton?.arguments?.questions !== "object" ||
+  parsedSkeleton.arguments.questions === null ||
+  Array.isArray(parsedSkeleton.arguments.questions) ||
+  !("claim_supported" in parsedSkeleton.arguments.questions)
+) {
+  fail(`prompts/get verify-claim questions must be an object map with claim_supported: ${skeletonText.slice(0, 200)}`);
+}
+console.log(`smoke-http: prompts OK (${promptNames.join(", ")}); verify-claim wording-v1, questions rendered as object map`);
+
+// prompts/get with an unknown name must return a JSON-RPC error.
+const unknownMsg = await postRpc(4, "prompts/get", { name: "no-such-prompt", arguments: {} });
+if (!unknownMsg.error || typeof unknownMsg.error.code !== "number") {
+  fail(`prompts/get unknown name expected a JSON-RPC error: ${JSON.stringify(unknownMsg).slice(0, 300)}`);
+}
+console.log(`smoke-http: prompts/get unknown OK (JSON-RPC error ${unknownMsg.error.code})`);
 
 // GET /mcp must be 405: the 2026-07-28 revision removed legacy GET streams.
 const getResponse = await fetch(`http://127.0.0.1:${port}/mcp`, { method: "GET" }).catch(
