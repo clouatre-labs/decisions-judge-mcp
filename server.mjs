@@ -35,6 +35,7 @@ import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import { cloudflareJudge } from "./providers/cloudflare-workers-ai.mjs";
+import { REGISTERED_PROMPTS } from "./prompts.mjs";
 import {
   envelope,
   fallbackEnvelope,
@@ -256,6 +257,16 @@ function buildServer() {
     },
     judgeHandler,
   );
+  // Static, version-stamped decision-pattern prompts. Both transports
+  // inherit them via this shared factory; resolution never executes code
+  // beyond the pure text builders in prompts.mjs.
+  for (const def of REGISTERED_PROMPTS) {
+    server.registerPrompt(
+      def.name,
+      { title: def.title, description: def.description, argsSchema: def.argsSchema },
+      (args) => def.build(args),
+    );
+  }
   return server;
 }
 

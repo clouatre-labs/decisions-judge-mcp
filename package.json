@@ -17,6 +17,7 @@
   },
   "files": [
     "server.mjs",
+    "prompts.mjs",
     "providers/typesafe-api.mjs",
     "providers/cloudflare-workers-ai.mjs",
     "README.md",
