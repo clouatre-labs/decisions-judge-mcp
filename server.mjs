@@ -89,33 +89,87 @@ const entryType = z.union([
   z.array(z.unknown()),
 ]);
 
+// Field descriptions follow TypeSafe question-design guidance so calling
+// models learn question construction from the schema itself.
 const questionSpec = z.object({
-  type: z.enum(["noul", "choice", "score"]).default("noul"),
-  instructions: entryType.nullable().optional(),
+  type: z
+    .enum(["noul", "choice", "score"])
+    .default("noul")
+    .describe(
+      "Question primitive: noul = yes/no probability, choice = pick among options, score = rating on ordered levels. Defaults to noul.",
+    ),
+  instructions: entryType
+    .nullable()
+    .optional()
+    .describe(
+      "Narrow, self-contained question text. Predicate-positive: a yes must affirm the trait, never negate it. One trait per question; no double-barreled or degree-worded noul questions. A flat confidence distribution across many requests means the question is under-specified.",
+    ),
   // noul: {true, false} descriptions (optional). choice: {option: description|null}.
   // score: [level descriptions] (>= 2).
-  criteria: z.union([
-    z.record(
-      z.string(),
-      z.union([z.string().min(1), z.record(z.string(), z.unknown()), z.array(z.unknown()), z.null()]),
+  criteria: z
+    .union([
+      z.record(
+        z.string(),
+        z.union([
+          z.string().min(1),
+          z.record(z.string(), z.unknown()),
+          z.array(z.unknown()),
+          z.null(),
+        ]),
+      ),
+      z.array(z.unknown()).min(2),
+    ])
+    .optional()
+    .describe(
+      "Per-option definitions for choice (option name -> description) or ordered level descriptions for score (array, >= 2). Prefer structured levels of the shape {summary, signals[]} over free text. Optional for noul.",
     ),
-    z.array(z.unknown()).min(2),
-  ]).optional(),
 });
 
 const inputSchema = z.object({
-  state: z.union([z.record(z.string(), z.unknown()), z.array(z.unknown()), z.string()]),
-  questions: z.record(z.string().min(1), questionSpec),
-  timeout_ms: z.number().int().positive().max(60000).optional(),
-  model: z.string().min(1).optional(),
+  state: z
+    .union([z.record(z.string(), z.unknown()), z.array(z.unknown()), z.string()])
+    .describe(
+      "Everything the questions need to be answered. Questions judge only what state contains, so include all relevant application state here.",
+    ),
+  questions: z
+    .record(z.string().min(1), questionSpec)
+    .describe(
+      "Map of question name to question spec. Ask many narrow, atomic questions in one request: questions run in parallel in a single fast call, which is far cheaper and faster than one call per question. Ignore answers to questions you do not need.",
+    ),
+  timeout_ms: z
+    .number()
+    .int()
+    .positive()
+    .max(60000)
+    .optional()
+    .describe("Optional per-request timeout cap in milliseconds; maximum 60000."),
+  model: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Optional model override. Pin a specific model id (e.g. jev-1.13.0) rather than jev-latest when answers feed calibration or repeatable decisions.",
+    ),
 });
 
 const outputSchema = z.object({
-  answers: z.record(z.string(), z.unknown()).optional(),
-  model: z.string().optional(),
-  usage: z.record(z.string(), z.unknown()).optional(),
-  fallback: z.boolean(),
-  error: z.string().optional(),
+  answers: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe(
+      "Map of question name to typed answer: noul answers carry yes/no with a probability, choice answers name the selected option, score answers give the chosen level.",
+    ),
+  model: z.string().optional().describe("Model id that produced the answers."),
+  usage: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe("Token usage metadata for the request."),
+  fallback: z
+    .boolean()
+    .describe(
+      "True when the judge failed and no answers are available; the request never blocks or throws.",
+    ),
+  error: z.string().optional().describe("Failure reason; present only when fallback is true."),
 });
 
 const { name, version } = createRequire(import.meta.url)("./package.json");
