@@ -116,6 +116,83 @@ if (result.serverInfo.name !== "decisions-judge-mcp") {
   fail(`unexpected server name: ${result.serverInfo.name}`);
 }
 
+// Prompts over HTTP: prompts/list and one prompts/get against /mcp. Responses
+// may arrive as plain JSON or as an SSE stream; parse incrementally until the
+// frame with the expected id arrives, then cancel the stream.
+async function postRpc(id, method, params) {
+  const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+  }).catch((err) => fail(`POST /mcp failed: ${err.message}`));
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("text/event-stream")) {
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      fail(`POST /mcp response is not JSON: ${text.slice(0, 200)}`);
+    }
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const dataLines = buffer
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim())
+      .filter(Boolean);
+    for (const dataLine of dataLines) {
+      let msg;
+      try {
+        msg = JSON.parse(dataLine);
+      } catch {
+        continue; // partial frame; keep reading
+      }
+      if (msg.id === id) {
+        await reader.cancel().catch(() => {});
+        return msg;
+      }
+    }
+  }
+  return fail(`POST /mcp SSE stream ended without a response for id ${id}`);
+}
+
+const listMsg = await postRpc(2, "prompts/list", {});
+const promptNames = (listMsg.result?.prompts ?? []).map((p) => p.name).sort();
+for (const expected of ["verify-claim", "classify", "route"]) {
+  if (!promptNames.includes(expected)) {
+    fail(`prompts/list missing "${expected}": got ${JSON.stringify(promptNames)}`);
+  }
+}
+
+const getMsg = await postRpc(3, "prompts/get", { name: "verify-claim", arguments: { state: "{}" } });
+const promptMessages = getMsg.result?.messages;
+if (!Array.isArray(promptMessages) || promptMessages.length !== 1) {
+  fail(`prompts/get verify-claim expected exactly one message: ${JSON.stringify(getMsg).slice(0, 300)}`);
+}
+const pm = promptMessages[0];
+if (pm.role !== "user" || pm.content?.type !== "text" || typeof pm.content.text !== "string") {
+  fail(`prompts/get verify-claim wrong message shape: ${JSON.stringify(pm).slice(0, 300)}`);
+}
+if (!pm.content.text.includes("wording-v1") || !pm.content.text.includes("judge")) {
+  fail(`prompts/get verify-claim text missing version stamp or judge skeleton: ${pm.content.text.slice(0, 200)}`);
+}
+if (!pm.content.text.includes('"type": "noul"') && !pm.content.text.includes('"type":"noul"')) {
+  fail(`prompts/get verify-claim text missing noul question type: ${pm.content.text.slice(0, 300)}`);
+}
+if (!pm.content.text.includes("claim_supported")) {
+  fail(`prompts/get verify-claim text missing claim_supported question key: ${pm.content.text.slice(0, 300)}`);
+}
+console.log(`smoke-http: prompts OK (${promptNames.join(", ")}); verify-claim wording-v1, questions rendered`);
+
 // GET /mcp must be 405: the 2026-07-28 revision removed legacy GET streams.
 const getResponse = await fetch(`http://127.0.0.1:${port}/mcp`, { method: "GET" }).catch(
   (err) => fail(`GET /mcp failed: ${err.message}`),

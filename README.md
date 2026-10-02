@@ -222,6 +222,33 @@ Concrete example, rewritten from the terse version in [Example](#example) to fol
 
 Note what changed: the state is restated inline and consistently, the criteria are balanced, and the framing names the role of this decision — each rule applied once, concretely.
 
+## Prompts
+
+The server exposes three static decision-pattern prompt templates: `verify-claim` (atomic yes/no checks of a claim against state), `classify` (pick one option with balanced criteria), and `route` (decide what the next decision should prepare for). Each template returns a ready-to-send judge call skeleton with atomic questions and structured `{summary, signals}` criteria. Every template is version-stamped (`wording-v1`); rewording bumps the stamp so earlier calibration runs stay comparable. Fetch one with `prompts/get`:
+
+```json
+{ "jsonrpc": "2.0", "id": 2, "method": "prompts/get", "params": { "name": "verify-claim", "arguments": { "state": "{}" } } }
+```
+
+The response is a single user message whose text embeds a judge skeleton like:
+
+```jsonc
+{
+  "tool": "judge",
+  "arguments": {
+    "state": "<state JSON goes here>",
+    "questions": {
+      "claim_supported": {
+        "type": "noul",
+        "instructions": "The provided state contains evidence that directly supports the claim under review. Does the evidence support the claim?"
+      }
+    }
+  }
+}
+```
+
+Fill in the state and send it to the judge tool.
+
 ## Providers
 
 Selected once at startup via `JUDGE_PROVIDER` (default `typesafe-api`). The judge tool's schema and behavior are identical under both providers.
