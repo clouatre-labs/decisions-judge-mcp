@@ -149,7 +149,7 @@ const inputSchema = z.object({
     .min(1)
     .optional()
     .describe(
-      "Optional model override. Pin a specific model id (e.g. jev-1.13.0) rather than jev-latest when answers feed calibration or repeatable decisions.",
+      "Optional model override. Pin a specific model id (e.g. jev-1.14.0) rather than jev-latest when answers feed calibration or repeatable decisions.",
     ),
 });
 
