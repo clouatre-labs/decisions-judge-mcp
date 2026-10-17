@@ -171,7 +171,7 @@ mcp:
 | `state` | object \| string \| array | JSON application state to judge |
 | `questions` | map | name → question spec (see below) |
 | `timeout_ms` | number, optional | max 60000 |
-| `model` | string, optional | override the resolved model (e.g. `jev-latest`) |
+| `model` | string, optional | override the resolved model (e.g. `jev-latest`, or pin `jev-1.14.0` for reproducible decisions) |
 
 Instructions and criteria values accept either plain strings or arbitrary JSON
 structure (objects/arrays). In-flight requests are cancelled when the client
