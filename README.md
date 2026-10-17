@@ -100,7 +100,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to regenerate the demo.
 
 ## Quickstart
 
-Requires Node >= 20 and at least one TypeSafe API key in the environment via `TYPESAFE_API_KEYS`, `TYPESAFE_API_KEY`, or `TYPESAFE_API_KEY_2` .. `TYPESAFE_API_KEY_9`.
+Requires Node >= 22 and at least one TypeSafe API key in the environment via `TYPESAFE_API_KEYS`, `TYPESAFE_API_KEY`, or `TYPESAFE_API_KEY_2` .. `TYPESAFE_API_KEY_9`.
 
 ```sh
 npx -y decisions-judge-mcp          # latest
