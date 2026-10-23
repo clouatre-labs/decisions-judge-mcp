@@ -571,6 +571,103 @@ function runStdioDefaultPathTest() {
           stdioFail(`unexpected criteria error for structured input: ${text3.slice(0, 200)}`);
         }
         ok(`widened inputs accepted, fallback=${payload3.fallback}`);
+        // Regression (issue #90): omitted `type` must be rejected with
+        // INVALID_PARAMS, not silently defaulted to noul.
+        send({
+          jsonrpc: "2.0",
+          id: 4,
+          method: "tools/call",
+          params: {
+            name: "judge",
+            arguments: {
+              state: {},
+              questions: { q: { instructions: "Is this a defect?" } },
+            },
+          },
+        });
+      } else if (msg.id === 4) {
+        clearTimeout(timer);
+        const text4 = msg.result?.content?.[0]?.text;
+        if (!msg.result?.isError || !text4) {
+          stdioFail(`expected INVALID_PARAMS for omitted type, got: ${JSON.stringify(msg).slice(0, 300)}`);
+        }
+        if (!/\btype\b/i.test(text4)) {
+          stdioFail(`expected error naming "type", got: ${text4}`);
+        }
+        ok(`omitted type rejected: ${text4.slice(0, 120)}`);
+        // Regression (issue #90): unknown keys must be rejected, not stripped.
+        send({
+          jsonrpc: "2.0",
+          id: 5,
+          method: "tools/call",
+          params: {
+            name: "judge",
+            arguments: {
+              state: {},
+              questions: {
+                q: { choice: true, criteria: { confirm: "yes", demote: "no" } },
+              },
+            },
+          },
+        });
+      } else if (msg.id === 5) {
+        clearTimeout(timer);
+        const text5 = msg.result?.content?.[0]?.text;
+        if (!msg.result?.isError || !text5) {
+          stdioFail(`expected INVALID_PARAMS for unknown key, got: ${JSON.stringify(msg).slice(0, 300)}`);
+        }
+        if (!/Unrecognized key/i.test(text5) || !/"choice"/.test(text5)) {
+          stdioFail(`expected error naming unknown key "choice", got: ${text5}`);
+        }
+        ok(`unknown key rejected: ${text5.slice(0, 200)}`);
+        // Explicitly-typed choice and score questions must still parse.
+        send({
+          jsonrpc: "2.0",
+          id: 6,
+          method: "tools/call",
+          params: {
+            name: "judge",
+            arguments: {
+              state: {},
+              questions: {
+                tier: {
+                  type: "choice",
+                  criteria: { confirm: "medium", demote: "simple", promote: "complex" },
+                },
+              },
+            },
+          },
+        });
+      } else if (msg.id === 6) {
+        clearTimeout(timer);
+        const text6 = msg.result?.content?.[0]?.text;
+        if (msg.error || !text6) {
+          stdioFail(`valid choice rejected by schema: ${JSON.stringify(msg).slice(0, 300)}`);
+        }
+        send({
+          jsonrpc: "2.0",
+          id: 7,
+          method: "tools/call",
+          params: {
+            name: "judge",
+            arguments: {
+              state: {},
+              questions: {
+                rating: {
+                  type: "score",
+                  criteria: ["low", "medium", "high"],
+                },
+              },
+            },
+          },
+        });
+      } else if (msg.id === 7) {
+        clearTimeout(timer);
+        const text7 = msg.result?.content?.[0]?.text;
+        if (msg.error || !text7) {
+          stdioFail(`valid score rejected by schema: ${JSON.stringify(msg).slice(0, 300)}`);
+        }
+        ok("explicitly-typed choice and score questions accepted");
         proc.kill("SIGKILL");
         process.exit(0);
       }

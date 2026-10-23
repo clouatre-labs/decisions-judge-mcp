@@ -92,39 +92,40 @@ const entryType = z.union([
 
 // Field descriptions follow TypeSafe question-design guidance so calling
 // models learn question construction from the schema itself.
-const questionSpec = z.object({
-  type: z
-    .enum(["noul", "choice", "score"])
-    .default("noul")
-    .describe(
-      "Question primitive: noul = yes/no probability, choice = pick among options, score = rating on ordered levels. Defaults to noul.",
-    ),
-  instructions: entryType
-    .nullable()
-    .optional()
-    .describe(
-      "Narrow, self-contained question text. Predicate-positive: a yes must affirm the trait, never negate it. One trait per question; no double-barreled or degree-worded noul questions. A flat confidence distribution across many requests means the question is under-specified.",
-    ),
-  // noul: {true, false} descriptions (optional). choice: {option: description|null}.
-  // score: [level descriptions] (>= 2).
-  criteria: z
-    .union([
-      z.record(
-        z.string(),
-        z.union([
-          z.string().min(1),
-          z.record(z.string(), z.unknown()),
-          z.array(z.unknown()),
-          z.null(),
-        ]),
+const questionSpec = z
+  .object({
+    type: z
+      .enum(["noul", "choice", "score"])
+      .describe(
+        "Question primitive: noul = yes/no probability, choice = pick among options, score = rating on ordered levels.",
       ),
-      z.array(z.unknown()).min(2),
-    ])
-    .optional()
-    .describe(
-      "Per-option definitions for choice (option name -> description) or ordered level descriptions for score (array, >= 2). Prefer structured levels of the shape {summary, signals[]} over free text. Optional for noul.",
-    ),
-});
+    instructions: entryType
+      .nullable()
+      .optional()
+      .describe(
+        "Narrow, self-contained question text. Predicate-positive: a yes must affirm the trait, never negate it. One trait per question; no double-barreled or degree-worded noul questions. A flat confidence distribution across many requests means the question is under-specified.",
+      ),
+    // noul: {true, false} descriptions (optional). choice: {option: description|null}.
+    // score: [level descriptions] (>= 2).
+    criteria: z
+      .union([
+        z.record(
+          z.string(),
+          z.union([
+            z.string().min(1),
+            z.record(z.string(), z.unknown()),
+            z.array(z.unknown()),
+            z.null(),
+          ]),
+        ),
+        z.array(z.unknown()).min(2),
+      ])
+      .optional()
+      .describe(
+        "Per-option definitions for choice (option name -> description) or ordered level descriptions for score (array, >= 2). Prefer structured levels of the shape {summary, signals[]} over free text. Optional for noul.",
+      ),
+  })
+  .strict(); // unknown keys (e.g. a "choice": true shorthand) must reject, not be stripped
 
 const inputSchema = z.object({
   state: z
