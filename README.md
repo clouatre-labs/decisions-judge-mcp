@@ -289,6 +289,8 @@ npm ci
 node --check server.mjs
 node scripts/smoke.mjs         # MCP stdio initialize handshake
 node scripts/smoke-judge.mjs   # judge fallback envelope (no API key needed)
+# Image accuracy probe (issue #95; needs TYPESAFE_API_KEY, makes live API calls):
+# node scripts/probe-images.mjs [--model jev-1.14.0]
 node server.mjs                # stdio server; needs TYPESAFE_API_KEY to answer
 ```
 
