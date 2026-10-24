@@ -16,6 +16,15 @@ import { Image, RateLimitError, TypeSafeClient, box, choice, noul, score } from 
 // Default model for the TypeSafe path, pinned so upgrades are explicit and
 // reviewable (a Renovate custom manager opens the bump PR). Caller model
 // overrides always win. The Cloudflare path keeps its own typesafe/jev default.
+// Default model for the TypeSafe path when the caller passes no `model`.
+// Bumping is a manual responsibility. Automated Renovate upgrades were
+// investigated and rejected: GET /v1/models requires Bearer auth (Renovate
+// custom datasources can authenticate via hostRules, but the hosted Renovate
+// app cannot receive that secret), and the public docs page
+// https://docs.typesafe.ai/models.md lists model versions only in prose,
+// which Renovate custom datasource formats cannot parse. If TypeSafe
+// publishes a JSON model-version endpoint, a customDatasources rule makes
+// this automatic.
 export const DEFAULT_MODEL = "jev-1.14.0";
 
 // Parse the configured key list: TYPESAFE_API_KEYS CSV first, else

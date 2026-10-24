@@ -172,7 +172,7 @@ mcp:
 | `questions` | map | name → question spec (see below) |
 | `images` | map, optional | name → `{data}` where `data` is base64 PNG/JPEG bytes. The API detects PNG vs JPEG from the file bytes, so no media type field is needed. Referenced by box questions via `<name>` in instructions; images are accepted only in this top-level map, and every entry must be referenced by at least one box question |
 | `timeout_ms` | number, optional | max 60000 |
-| `model` | string, optional | override the resolved model. The TypeSafe path defaults to `jev-1.14.0`. Bumping this pin is a manual responsibility: update `DEFAULT_MODEL` in `providers/typesafe-api.mjs`. Version sources checked: TypeSafe `GET /v1/models` (https://docs.typesafe.ai/api/list-models.md) requires Bearer auth -- Renovate custom datasources can authenticate via `hostRules`, but the hosted Renovate app cannot receive that secret -- and the public docs page (https://docs.typesafe.ai/models.md) lists model versions only in prose, which Renovate custom datasource formats (json, line-based text, html hyperlinks) cannot parse; the Cloudflare path defaults to `typesafe/jev` |
+| `model` | string, optional | override the resolved model. The TypeSafe path defaults to `jev-1.14.0` (pinned; bumping is manual -- see `DEFAULT_MODEL` in `providers/typesafe-api.mjs`); the Cloudflare path defaults to `typesafe/jev` |
 
 Instructions and criteria values accept either plain strings or arbitrary JSON
 structure (objects/arrays). In-flight requests are cancelled when the client
