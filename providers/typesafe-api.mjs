@@ -15,13 +15,12 @@ import { Image, RateLimitError, TypeSafeClient, box, choice, noul, score } from 
 
 // Default model for the TypeSafe path when the caller passes no `model`.
 // Bumping is a manual responsibility. Automated Renovate upgrades were
-// investigated and rejected: GET /v1/models requires Bearer auth (Renovate
-// custom datasources can authenticate via hostRules, but the hosted Renovate
-// app cannot receive that secret), and the public docs page
-// https://docs.typesafe.ai/models.md lists model versions only in prose,
-// which Renovate custom datasource formats cannot parse. If TypeSafe
-// publishes a JSON model-version endpoint, a customDatasources rule makes
-// this automatic.
+// investigated and rejected: GET /v1/models is account-scoped and
+// Bearer-authed (it answers "what can this account use", not "what versions
+// exist"), and docs.typesafe.ai/models.md lists versions only in prose,
+// which no Renovate custom datasource format parses. If TypeSafe publishes
+// a machine-readable version feed (typesafe-ai/typesafe-sdk-js#22), a
+// customDatasources rule makes this automatic.
 // Caller model overrides always win.
 export const DEFAULT_MODEL = "jev-1.14.0";
 
