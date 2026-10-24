@@ -14,14 +14,16 @@
 //   authorization specification.
 //
 // The judge tool sends application state (object, string, or array) plus typed
-// questions (noul / choice / score) to the TypeSafe System One API in a single
-// request and returns the raw typed answers plus model/usage metadata.
+// questions (noul / choice / score / box, with an optional top-level images
+// map consumed only by box questions) to the TypeSafe System One API in a
+// single request and returns the raw typed answers plus model/usage metadata.
 // Instructions and criteria values accept strings or arbitrary JSON structure
 // (EntryType); an optional model override is honored. Client disconnects abort
 // the in-flight request. Question specs are validated before any provider
-// call, and {state, questions} payloads exceeding 256 KiB are rejected, both
-// via the shared checks in providers/typesafe-api.mjs. Retries, timeouts, and
-// model resolution (jev-latest) are owned by @typesafe-ai/sdk.
+// call, and {state, questions, images} payloads exceeding 256 KiB are
+// rejected, both via the shared checks in providers/typesafe-api.mjs.
+// Retries, timeouts, and default model resolution (pinned to jev-1.14.0 on
+// the typesafe-api path) are owned by @typesafe-ai/sdk.
 //
 // Auth: TYPESAFE_API_KEYS (CSV) or TYPESAFE_API_KEY / TYPESAFE_API_KEY_2..9
 // (SDK standard). Rate limits (429/529) rotate to the next configured key.
@@ -42,6 +44,7 @@ import {
   fallbackFrom,
   parseKeys,
   typesafeJudge,
+  validateImages,
   validateQuestionSpec,
 } from "./providers/typesafe-api.mjs";
 
@@ -95,9 +98,9 @@ const entryType = z.union([
 const questionSpec = z
   .object({
     type: z
-      .enum(["noul", "choice", "score"])
+      .enum(["noul", "choice", "score", "box"])
       .describe(
-        "Question primitive: noul = yes/no probability, choice = pick among options, score = rating on ordered levels.",
+        "Question primitive: noul = yes/no probability, choice = pick among options, score = rating on ordered levels, box = locate a region in an attached image (requires the top-level images map).",
       ),
     instructions: entryType
       .nullable()
@@ -137,6 +140,22 @@ const inputSchema = z.object({
     .record(z.string().min(1), questionSpec)
     .describe(
       "Map of question name to question spec. Ask many narrow, atomic questions in one request: questions run in parallel in a single fast call, which is far cheaper and faster than one call per question. Ignore answers to questions you do not need.",
+    ),
+  images: z
+    .record(
+      z.string().min(1),
+      z
+        .object({
+          data: z
+            .string()
+            .min(1)
+            .describe("Base64-encoded image bytes (PNG or JPEG), without a data: URL prefix."),
+        })
+        .strict(),
+    )
+    .optional()
+    .describe(
+      "Optional map of image name to image, referenced by box questions via <name> in instructions (e.g. 'Locate the pay button in <screenshot>'). Images are accepted only in this top-level map, never inside questions or state.",
     ),
   timeout_ms: z
     .number()
@@ -196,19 +215,22 @@ const MAX_PAYLOAD_BYTES = 262144;
 
 // Provider dispatch: sanitize inputs, enforce the payload cap, then hand off.
 // Every error lands in the fallback envelope.
-async function judgeHandler({ state, questions, timeout_ms, model }, ctx) {
+async function judgeHandler({ state, questions, images, timeout_ms, model }, ctx) {
   const cleanState = stripProtoKeys(state);
   const cleanQuestions = stripProtoKeys(questions);
+  const cleanImages = stripProtoKeys(images);
   try {
     for (const spec of Object.values(cleanQuestions)) validateQuestionSpec(spec);
+    validateImages(cleanQuestions, cleanImages);
   } catch (err) {
     return fallbackEnvelope(
       err && err.message ? err.message : "question construction failed",
     );
   }
   // Serialize once and measure UTF-8 bytes (Buffer.byteLength), not UTF-16
-  // code units, so non-ASCII payloads cannot slip past the cap.
-  const serialized = JSON.stringify({ state: cleanState, questions: cleanQuestions });
+  // code units, so non-ASCII payloads cannot slip past the cap. Base64 image
+  // bytes count against the same limit.
+  const serialized = JSON.stringify({ state: cleanState, questions: cleanQuestions, images: cleanImages });
   if (Buffer.byteLength(serialized, "utf8") > MAX_PAYLOAD_BYTES) {
     return fallbackEnvelope("payload exceeds 256 KiB limit");
   }
@@ -219,6 +241,7 @@ async function judgeHandler({ state, questions, timeout_ms, model }, ctx) {
             const payload = await cloudflareJudge({
               state: args.state,
               questions: args.questions,
+              images: cleanImages,
               model: args.model,
               timeout_ms: args.timeout_ms,
               signal: c?.signal,
@@ -229,7 +252,7 @@ async function judgeHandler({ state, questions, timeout_ms, model }, ctx) {
           }
         }
       : typesafeJudge;
-  return dispatch({ state: cleanState, questions: cleanQuestions, timeout_ms, model }, ctx);
+  return dispatch({ state: cleanState, questions: cleanQuestions, images: cleanImages, timeout_ms, model }, ctx);
 }
 
 // Build the McpServer with the judge tool registered. Shared by both
@@ -240,14 +263,14 @@ function buildServer() {
     { name, version },
     {
       instructions:
-        "MCP server exposing a single 'judge' tool that sends application state plus typed questions (noul yes/no probability, choice among options, or score on ordered levels) to the TypeSafe System One model and returns structured answers with model/usage metadata. All questions are answered in one request; failures return a {fallback: true, error} envelope instead of blocking.",
+        "MCP server exposing a single 'judge' tool that sends application state plus typed questions (noul yes/no probability, choice among options, score on ordered levels, or box locating a region in an image from an optional top-level images map) to the TypeSafe System One model and returns structured answers with model/usage metadata. Default model is pinned to jev-1.14.0 on the typesafe-api path. All questions are answered in one request; failures return a {fallback: true, error} envelope instead of blocking.",
     },
   );
   server.registerTool(
     "judge",
     {
       description:
-        "Ask the TypeSafe System One model (Jev) typed questions (noul yes/no probability, choice among options, score on ordered levels) about JSON application state. All questions are answered in one fast request. Returns {answers, model, usage} on success or {fallback: true, error} on any failure.",
+        "Ask the TypeSafe System One model (Jev) typed questions (noul yes/no probability, choice among options, score on ordered levels, box locating a region in an image from an optional images map) about JSON application state. Default model is pinned to jev-1.14.0 on the typesafe-api path. All questions are answered in one fast request. Returns {answers, model, usage} on success or {fallback: true, error} on any failure.",
       inputSchema,
       outputSchema,
       annotations: {

@@ -5,7 +5,13 @@
 // require TYPESAFE_API_KEY.
 import { spawn } from "node:child_process";
 import { cloudflareJudge } from "../providers/cloudflare-workers-ai.mjs";
-import { fallbackFrom, parseKeys, typesafeJudge } from "../providers/typesafe-api.mjs";
+import {
+  DEFAULT_MODEL,
+  fallbackFrom,
+  parseKeys,
+  typesafeJudge,
+  validateImages,
+} from "../providers/typesafe-api.mjs";
 
 const TIMEOUT_MS = 10_000;
 
@@ -199,6 +205,31 @@ async function runOfflineCloudflareTests() {
       }
       ok("cloudflare secret redaction");
     }
+
+    // Edge case: box questions and images are unsupported on this provider --
+    // fail closed with the fallback payload naming the unsupported feature,
+    // before any fetch (no image bytes ever sent).
+    {
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls++;
+        return fakeResponse({ body: COMPLETED_BODY });
+      };
+      const out = await cloudflareJudge({
+        ...judgeArgs,
+        questions: { locate: { type: "box", instructions: "Locate the pay button in <ui>" } },
+        images: { ui: { data: "aGk=" } },
+      });
+      if (
+        out.fallback !== true ||
+        !/box/.test(out.error ?? "") ||
+        !/images/.test(out.error ?? "") ||
+        calls !== 0
+      ) {
+        fail(`cloudflare box/images unsupported: unexpected result ${JSON.stringify(out)} calls=${calls}`);
+      }
+      ok(`cloudflare box/images rejected with fallback envelope (${out.error})`);
+    }
   } finally {
     globalThis.fetch = savedFetch;
     if (savedEnv.token === undefined) delete process.env.CLOUDFLARE_API_TOKEN;
@@ -338,6 +369,103 @@ async function runOfflineTypesafeTests() {
         fail("parseKeys whitespace CSV: expected no keys");
       }
       ok("parseKeys normalization and precedence");
+    }
+
+    // Happy path: no model override pins DEFAULT_MODEL (jev-1.14.0); a caller
+    // override still wins.
+    {
+      process.env.TYPESAFE_API_KEY = "pin";
+      const bodies = [];
+      globalThis.fetch = async (...args) => {
+        const req = args[0] instanceof Request ? args[0] : new Request(args[0], { ...args[1], duplex: "half" });
+        bodies.push(await req.text());
+        return json(SUCCESS, 200);
+      };
+      const pinned = (await typesafeJudge({ ...judgeArgs })).structuredContent;
+      if (pinned.fallback !== false) fail(`DEFAULT_MODEL: unexpected result ${JSON.stringify(pinned)}`);
+      if (!bodies[0].includes("jev-1.14.0")) fail(`DEFAULT_MODEL: expected jev-1.14.0 in ${bodies[0]}`);
+      if (DEFAULT_MODEL !== "jev-1.14.0") fail(`DEFAULT_MODEL export: got ${DEFAULT_MODEL}`);
+      const overridden = (
+        await typesafeJudge({ ...judgeArgs, model: "jev-9.9.9" })
+      ).structuredContent;
+      if (overridden.fallback !== false) fail("model override: unexpected fallback");
+      if (!bodies[1].includes("jev-9.9.9")) fail(`model override: expected jev-9.9.9 in ${bodies[1]}`);
+      ok("DEFAULT_MODEL pin with caller override honored");
+    }
+
+    // Happy path: box question builds assets from the images map, sends the
+    // danger-zone header, and returns the typed box answer.
+    {
+      process.env.TYPESAFE_API_KEY = "box";
+      const PNG_BASE64 = Buffer.from("png-bytes-0").toString("base64");
+      const BOX_SUCCESS = {
+        answers: { locate: { type: "box", box: { top: 1, bottom: 2, left: 3, right: 4 }, confidence: 0.9 } },
+        model: DEFAULT_MODEL,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      };
+      let captured;
+      globalThis.fetch = async (...args) => {
+        const req = args[0] instanceof Request ? args[0] : new Request(args[0], { ...args[1], duplex: "half" });
+        captured = { headers: req.headers, body: await req.text() };
+        return json(BOX_SUCCESS, 200);
+      };
+      const out = (
+        await typesafeJudge({
+          state: { page: "checkout" },
+          questions: { locate: { type: "box", instructions: "Locate the pay button in <ui>" } },
+          images: { ui: { data: PNG_BASE64 } },
+        })
+      ).structuredContent;
+      if (
+        out.fallback !== false ||
+        out.answers?.locate?.type !== "box" ||
+        out.answers.locate.box?.top !== 1
+      ) {
+        fail(`typesafe box happy path: unexpected result ${JSON.stringify(out)}`);
+      }
+      if (captured.headers.get("typesafe-danger-zone-images") !== "true") {
+        fail("typesafe box happy path: missing TypeSafe-Danger-Zone-Images header");
+      }
+      if (!captured.body.includes("png-bytes-0")) fail("typesafe box happy path: image bytes not sent as an asset");
+      if (!captured.body.includes("<ui>")) fail("typesafe box happy path: asset reference missing from request");
+      ok("typesafe box happy path (assets, header, typed answer)");
+    }
+
+    // Edge case: server schema guard -- a box question whose instructions
+    // reference no image name from the images map is rejected before any
+    // request is built.
+    {
+      let threw;
+      try {
+        validateImages(
+          { locate: { type: "box", instructions: "Locate the pay button in <missing>" } },
+          { ui: { data: "aGk=" } },
+        );
+      } catch (err) {
+        threw = err;
+      }
+      if (!threw || !/images map/.test(threw.message)) {
+        fail(`validateImages dangling reference: expected rejection, got ${String(threw)}`);
+      }
+      validateImages(
+        { locate: { type: "box", instructions: "Locate the pay button in <ui>" } },
+        { ui: { data: "aGk=" } },
+      );
+      // Edge case: an images entry no box question references is rejected
+      // (images are box-only input on every provider).
+      let unreferenced;
+      try {
+        validateImages(
+          { locate: { type: "box", instructions: "Locate the pay button in <ui>" } },
+          { ui: { data: "aGk=" }, extra: { data: "aGk=" } },
+        );
+      } catch (err) {
+        unreferenced = err;
+      }
+      if (!unreferenced || !/not referenced by any box question/.test(unreferenced.message)) {
+        fail(`validateImages unreferenced image: expected rejection, got ${String(unreferenced)}`);
+      }
+      ok("validateImages rejects dangling image reference and unreferenced image before any request");
     }
   } finally {
     globalThis.fetch = savedFetch;

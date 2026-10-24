@@ -92,7 +92,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to regenerate the demo.
       "probabilities": { "merge": 0.97, "iterate": 0.02, "escalate": 0.01 }
     }
   },
-  "model": "jev-latest",
+  "model": "jev-1.14.0",
   "usage": { "input_tokens": 214, "output_tokens": 18 },
   "fallback": false
 }
@@ -170,8 +170,9 @@ mcp:
 | --- | --- | --- |
 | `state` | object \| string \| array | JSON application state to judge |
 | `questions` | map | name → question spec (see below) |
+| `images` | map, optional | name → `{data}` where `data` is base64 PNG/JPEG bytes. The API detects PNG vs JPEG from the file bytes, so no media type field is needed. Referenced by box questions via `<name>` in instructions; images are accepted only in this top-level map, and every entry must be referenced by at least one box question |
 | `timeout_ms` | number, optional | max 60000 |
-| `model` | string, optional | override the resolved model (e.g. `jev-latest`, or pin `jev-1.14.0` for reproducible decisions) |
+| `model` | string, optional | override the resolved model. The TypeSafe path defaults to `jev-1.14.0` (pinned; bumping is manual -- see `DEFAULT_MODEL` in `providers/typesafe-api.mjs`); the Cloudflare path defaults to `typesafe/jev` |
 
 Instructions and criteria values accept either plain strings or arbitrary JSON
 structure (objects/arrays). In-flight requests are cancelled when the client
@@ -182,6 +183,29 @@ disconnects.
 | `noul` | omit | yes/no probability |
 | `choice` | `{option: description\|null}` | winning option name |
 | `score` | ordered array of level descriptions | best matching level |
+| `box` | omit; instructions must reference an image as `<name>` | `{type, box: {top, bottom, left, right}, confidence}` |
+
+Box questions require the top-level `images` map and are supported only on the
+default `typesafe-api` provider (the Cloudflare provider returns a fallback
+envelope naming the unsupported feature). The API strips image metadata and does
+not apply EXIF orientation, so pre-orient images before sending. Example:
+
+```jsonc
+{
+  "state": { "page": "checkout" },
+  "questions": {
+    "pay_button": {
+      "type": "box",
+      "instructions": "Locate the pay button in <screenshot>"
+    }
+  },
+  "images": {
+    "screenshot": {
+      "data": "<base64 PNG or JPEG bytes>"
+    }
+  }
+}
+```
 
 Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failure — failures never block agent workflows. A `noul` answer is a probability, not a verdict: pick your own action threshold in the caller (e.g. proceed only above 0.7).
 
@@ -189,7 +213,7 @@ Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failu
 
 Jev answers short, well-framed questions better than terse ones. A working reference implementation ([LamplighterPaul/jev-piano](https://github.com/LamplighterPaul/jev-piano)) demonstrates the idiom.
 
-Four patterns, all applicable to the three question types (`noul`, `choice`, `score`):
+Four patterns, all applicable to the four question types (`noul`, `choice`, `score`, `box`):
 
 1. **One decision per question ID.** Each entry in `questions` asks exactly one concept. Don't bundle "is it correct and should we ship it" into a single `noul` — ask two questions.
 2. **Descriptive criteria strings.** Every choice option is described by its own intrinsic properties and trade-offs, never by position, index, or an endorsement of the desired answer. Describing one option as "lowest risk" and its rivals as problems is a hint; describing each option's genuine trade-off is not. The model should reach the answer from the state plus balanced descriptions.

@@ -3,7 +3,7 @@
 // Sends application state plus typed questions (noul / choice / score) to the
 // TypeSafe System One API in a single request and returns the raw typed
 // answers plus model/usage metadata. Retries, timeouts, and model resolution
-// (jev-latest) are owned by @typesafe-ai/sdk. Client disconnects abort the
+// (pinned by DEFAULT_MODEL) are owned by @typesafe-ai/sdk. Client disconnects abort the
 // in-flight request. Auth: TYPESAFE_API_KEYS (CSV, first) or TYPESAFE_API_KEY
 // plus TYPESAFE_API_KEY_2..9. Keys are tried in order; on a rate limit
 // (429/529) the judge rotates to the next key. 429 is excluded from each
@@ -11,7 +11,18 @@
 //
 // Any failure returns { fallback: true, error: "..." } -- never blocks.
 
-import { RateLimitError, TypeSafeClient, choice, noul, score } from "@typesafe-ai/sdk";
+import { Image, RateLimitError, TypeSafeClient, box, choice, noul, score } from "@typesafe-ai/sdk";
+
+// Default model for the TypeSafe path when the caller passes no `model`.
+// Bumping is a manual responsibility. Automated Renovate upgrades were
+// investigated and rejected: GET /v1/models is account-scoped and
+// Bearer-authed (it answers "what can this account use", not "what versions
+// exist"), and docs.typesafe.ai/models.md lists versions only in prose,
+// which no Renovate custom datasource format parses. If TypeSafe publishes
+// a machine-readable version feed (typesafe-ai/typesafe-sdk-js#22), a
+// customDatasources rule makes this automatic.
+// Caller model overrides always win.
+export const DEFAULT_MODEL = "jev-1.14.0";
 
 // Parse the configured key list: TYPESAFE_API_KEYS CSV first, else
 // TYPESAFE_API_KEY and TYPESAFE_API_KEY_2..9. Segments are trimmed, empty
@@ -98,6 +109,41 @@ export function validateQuestionSpec(spec) {
   }
 }
 
+// Cross-checks between box questions and the top-level images map. Runs in
+// judgeHandler before any request so malformed box/images combinations return
+// the documented fallback error. Each box question must reference at least
+// one <name> from the images map, and every images entry must be referenced
+// by at least one box question.
+export function validateImages(questions, images) {
+  const boxSpecs = Object.values(questions ?? {}).filter((spec) => spec?.type === "box");
+  const imageNames = images && typeof images === "object" ? Object.keys(images) : [];
+  if (boxSpecs.length > 0 && imageNames.length === 0) {
+    throw new Error(
+      "box questions require the top-level images map (name -> {data})",
+    );
+  }
+  const referenced = new Set();
+  for (const spec of boxSpecs) {
+    if (typeof spec.instructions !== "string" || spec.instructions === "") {
+      throw new Error("box question requires instructions text referencing an image as <name>");
+    }
+    const refs = [...spec.instructions.matchAll(/<([^<>\s]+)>/g)].map((m) => m[1]);
+    for (const r of refs) referenced.add(r);
+    if (!refs.some((name) => imageNames.includes(name))) {
+      throw new Error(
+        `box question instructions must reference at least one image name from the images map as <name> (available: ${imageNames.join(", ")})`,
+      );
+    }
+  }
+  for (const name of imageNames) {
+    if (!referenced.has(name)) {
+      throw new Error(
+        `images map entry "${name}" is not referenced by any box question as <name>; images are accepted only for box questions`,
+      );
+    }
+  }
+}
+
 function buildQuestion(spec) {
   validateQuestionSpec(spec);
   if (spec.type === "choice") {
@@ -106,6 +152,9 @@ function buildQuestion(spec) {
   if (spec.type === "score") {
     return score(spec.instructions, spec.criteria);
   }
+  if (spec.type === "box") {
+    return box(spec.instructions);
+  }
   return noul(spec.instructions, spec.criteria);
 }
 
@@ -113,7 +162,7 @@ function buildQuestion(spec) {
 // question specs, then the SDK question objects are constructed. On a rate
 // limit the request rotates through the remaining configured keys before any
 // fallback envelope is returned (no delay per attempt).
-export async function typesafeJudge({ state, questions, timeout_ms, model }, ctx) {
+export async function typesafeJudge({ state, questions, images, timeout_ms, model }, ctx) {
   let qmap;
   try {
     qmap = Object.fromEntries(
@@ -122,13 +171,39 @@ export async function typesafeJudge({ state, questions, timeout_ms, model }, ctx
   } catch (err) {
     return fallbackFrom(err, "question construction failed");
   }
-  const request = { state, questions: qmap };
-  if (model) request.model = model;
-  const options = (timeout_ms || ctx?.signal) ? { timeout: timeout_ms, signal: ctx?.signal } : undefined;
+  const request = { state, questions: qmap, model: model ?? DEFAULT_MODEL };
+  // Assets are built only from image names actually referenced by box
+  // instructions; every asset sent must appear in the request or the SDK
+  // rejects before sending. Image bytes are decoded from the top-level
+  // images map only -- never from questions or state.
+  const imageNames = images && typeof images === "object" ? Object.keys(images) : [];
+  const referenced = new Set();
+  for (const spec of Object.values(questions)) {
+    if (spec?.type !== "box" || typeof spec.instructions !== "string") continue;
+    for (const match of spec.instructions.matchAll(/<([^<>\s]+)>/g)) {
+      if (imageNames.includes(match[1])) referenced.add(match[1]);
+    }
+  }
+  if (referenced.size > 0) {
+    try {
+      request.assets = Object.fromEntries(
+        [...referenced].map((name) => [name, Image.fromBase64(images[name].data)]),
+      );
+    } catch (err) {
+      return fallbackFrom(err, "image decoding failed");
+    }
+  }
+  const options = {};
+  if (timeout_ms) options.timeout = timeout_ms;
+  if (ctx?.signal) options.signal = ctx.signal;
+  if (referenced.size > 0) {
+    // Required by the API for any request carrying box questions.
+    options.headers = { "TypeSafe-Danger-Zone-Images": "true" };
+  }
   let lastErr;
   for (const key of parseKeys()) {
     try {
-      const result = await getClient(key).systemOne(request, options);
+      const result = await getClient(key).systemOne(request, Object.keys(options).length > 0 ? options : undefined);
       return envelope({
         answers: result.answers,
         model: result.model,
