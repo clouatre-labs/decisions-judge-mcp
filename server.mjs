@@ -14,14 +14,16 @@
 //   authorization specification.
 //
 // The judge tool sends application state (object, string, or array) plus typed
-// questions (noul / choice / score) to the TypeSafe System One API in a single
-// request and returns the raw typed answers plus model/usage metadata.
+// questions (noul / choice / score / box, with an optional top-level images
+// map consumed only by box questions) to the TypeSafe System One API in a
+// single request and returns the raw typed answers plus model/usage metadata.
 // Instructions and criteria values accept strings or arbitrary JSON structure
 // (EntryType); an optional model override is honored. Client disconnects abort
 // the in-flight request. Question specs are validated before any provider
-// call, and {state, questions} payloads exceeding 256 KiB are rejected, both
-// via the shared checks in providers/typesafe-api.mjs. Retries, timeouts, and
-// model resolution (jev-latest) are owned by @typesafe-ai/sdk.
+// call, and {state, questions, images} payloads exceeding 256 KiB are
+// rejected, both via the shared checks in providers/typesafe-api.mjs.
+// Retries, timeouts, and default model resolution (pinned to jev-1.14.0 on
+// the typesafe-api path) are owned by @typesafe-ai/sdk.
 //
 // Auth: TYPESAFE_API_KEYS (CSV) or TYPESAFE_API_KEY / TYPESAFE_API_KEY_2..9
 // (SDK standard). Rate limits (429/529) rotate to the next configured key.
@@ -261,14 +263,14 @@ function buildServer() {
     { name, version },
     {
       instructions:
-        "MCP server exposing a single 'judge' tool that sends application state plus typed questions (noul yes/no probability, choice among options, or score on ordered levels) to the TypeSafe System One model and returns structured answers with model/usage metadata. All questions are answered in one request; failures return a {fallback: true, error} envelope instead of blocking.",
+        "MCP server exposing a single 'judge' tool that sends application state plus typed questions (noul yes/no probability, choice among options, score on ordered levels, or box locating a region in an image from an optional top-level images map) to the TypeSafe System One model and returns structured answers with model/usage metadata. Default model is pinned to jev-1.14.0 on the typesafe-api path. All questions are answered in one request; failures return a {fallback: true, error} envelope instead of blocking.",
     },
   );
   server.registerTool(
     "judge",
     {
       description:
-        "Ask the TypeSafe System One model (Jev) typed questions (noul yes/no probability, choice among options, score on ordered levels) about JSON application state. All questions are answered in one fast request. Returns {answers, model, usage} on success or {fallback: true, error} on any failure.",
+        "Ask the TypeSafe System One model (Jev) typed questions (noul yes/no probability, choice among options, score on ordered levels, box locating a region in an image from an optional images map) about JSON application state. Default model is pinned to jev-1.14.0 on the typesafe-api path. All questions are answered in one fast request. Returns {answers, model, usage} on success or {fallback: true, error} on any failure.",
       inputSchema,
       outputSchema,
       annotations: {

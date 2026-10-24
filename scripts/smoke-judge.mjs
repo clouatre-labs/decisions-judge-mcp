@@ -451,7 +451,21 @@ async function runOfflineTypesafeTests() {
         { locate: { type: "box", instructions: "Locate the pay button in <ui>" } },
         { ui: { data: "aGk=" } },
       );
-      ok("validateImages rejects dangling image reference before any request");
+      // Edge case: an images entry no box question references is rejected
+      // (images are box-only input on every provider).
+      let unreferenced;
+      try {
+        validateImages(
+          { locate: { type: "box", instructions: "Locate the pay button in <ui>" } },
+          { ui: { data: "aGk=" }, extra: { data: "aGk=" } },
+        );
+      } catch (err) {
+        unreferenced = err;
+      }
+      if (!unreferenced || !/not referenced by any box question/.test(unreferenced.message)) {
+        fail(`validateImages unreferenced image: expected rejection, got ${String(unreferenced)}`);
+      }
+      ok("validateImages rejects dangling image reference and unreferenced image before any request");
     }
   } finally {
     globalThis.fetch = savedFetch;

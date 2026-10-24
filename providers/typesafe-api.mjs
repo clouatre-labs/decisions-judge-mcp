@@ -3,7 +3,7 @@
 // Sends application state plus typed questions (noul / choice / score) to the
 // TypeSafe System One API in a single request and returns the raw typed
 // answers plus model/usage metadata. Retries, timeouts, and model resolution
-// (jev-latest) are owned by @typesafe-ai/sdk. Client disconnects abort the
+// (pinned by DEFAULT_MODEL) are owned by @typesafe-ai/sdk. Client disconnects abort the
 // in-flight request. Auth: TYPESAFE_API_KEYS (CSV, first) or TYPESAFE_API_KEY
 // plus TYPESAFE_API_KEY_2..9. Keys are tried in order; on a rate limit
 // (429/529) the judge rotates to the next key. 429 is excluded from each
@@ -105,26 +105,34 @@ export function validateQuestionSpec(spec) {
 
 // Cross-checks between box questions and the top-level images map. Runs in
 // judgeHandler before any request so malformed box/images combinations return
-// the documented fallback error. A box question must carry instructions text
-// and reference at least one <name> present in the images map.
+// the documented fallback error. Each box question must reference at least
+// one <name> from the images map, and every images entry must be referenced
+// by at least one box question.
 export function validateImages(questions, images) {
-  const hasBox = Object.values(questions ?? {}).some((spec) => spec?.type === "box");
+  const boxSpecs = Object.values(questions ?? {}).filter((spec) => spec?.type === "box");
   const imageNames = images && typeof images === "object" ? Object.keys(images) : [];
-  if (!hasBox) return;
-  if (imageNames.length === 0) {
+  if (boxSpecs.length > 0 && imageNames.length === 0) {
     throw new Error(
       "box questions require the top-level images map (name -> {data})",
     );
   }
-  for (const spec of Object.values(questions)) {
-    if (spec?.type !== "box") continue;
+  const referenced = new Set();
+  for (const spec of boxSpecs) {
     if (typeof spec.instructions !== "string" || spec.instructions === "") {
       throw new Error("box question requires instructions text referencing an image as <name>");
     }
     const refs = [...spec.instructions.matchAll(/<([^<>\s]+)>/g)].map((m) => m[1]);
+    for (const r of refs) referenced.add(r);
     if (!refs.some((name) => imageNames.includes(name))) {
       throw new Error(
         `box question instructions must reference at least one image name from the images map as <name> (available: ${imageNames.join(", ")})`,
+      );
+    }
+  }
+  for (const name of imageNames) {
+    if (!referenced.has(name)) {
+      throw new Error(
+        `images map entry "${name}" is not referenced by any box question as <name>; images are accepted only for box questions`,
       );
     }
   }
