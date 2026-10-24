@@ -113,7 +113,7 @@ export function validateImages(questions, images) {
   if (!hasBox) return;
   if (imageNames.length === 0) {
     throw new Error(
-      "box questions require the top-level images map (name -> {data, media_type})",
+      "box questions require the top-level images map (name -> {data})",
     );
   }
   for (const spec of Object.values(questions)) {

@@ -218,7 +218,7 @@ async function runOfflineCloudflareTests() {
       const out = await cloudflareJudge({
         ...judgeArgs,
         questions: { locate: { type: "box", instructions: "Locate the pay button in <ui>" } },
-        images: { ui: { data: "aGk=", media_type: "image/png" } },
+        images: { ui: { data: "aGk=" } },
       });
       if (
         out.fallback !== true ||
@@ -413,7 +413,7 @@ async function runOfflineTypesafeTests() {
         await typesafeJudge({
           state: { page: "checkout" },
           questions: { locate: { type: "box", instructions: "Locate the pay button in <ui>" } },
-          images: { ui: { data: PNG_BASE64, media_type: "image/png" } },
+          images: { ui: { data: PNG_BASE64 } },
         })
       ).structuredContent;
       if (
@@ -439,7 +439,7 @@ async function runOfflineTypesafeTests() {
       try {
         validateImages(
           { locate: { type: "box", instructions: "Locate the pay button in <missing>" } },
-          { ui: { data: "aGk=", media_type: "image/png" } },
+          { ui: { data: "aGk=" } },
         );
       } catch (err) {
         threw = err;
@@ -449,7 +449,7 @@ async function runOfflineTypesafeTests() {
       }
       validateImages(
         { locate: { type: "box", instructions: "Locate the pay button in <ui>" } },
-        { ui: { data: "aGk=", media_type: "image/png" } },
+        { ui: { data: "aGk=" } },
       );
       ok("validateImages rejects dangling image reference before any request");
     }

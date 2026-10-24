@@ -147,10 +147,7 @@ const inputSchema = z.object({
           data: z
             .string()
             .min(1)
-            .describe("Base64-encoded image bytes, without a data: URL prefix."),
-          media_type: z
-            .enum(["image/png", "image/jpeg"])
-            .describe("Image media type; only PNG and JPEG are supported."),
+            .describe("Base64-encoded image bytes (PNG or JPEG), without a data: URL prefix."),
         })
         .strict(),
     )
@@ -219,9 +216,10 @@ const MAX_PAYLOAD_BYTES = 262144;
 async function judgeHandler({ state, questions, images, timeout_ms, model }, ctx) {
   const cleanState = stripProtoKeys(state);
   const cleanQuestions = stripProtoKeys(questions);
+  const cleanImages = stripProtoKeys(images);
   try {
     for (const spec of Object.values(cleanQuestions)) validateQuestionSpec(spec);
-    validateImages(cleanQuestions, images);
+    validateImages(cleanQuestions, cleanImages);
   } catch (err) {
     return fallbackEnvelope(
       err && err.message ? err.message : "question construction failed",
@@ -230,7 +228,7 @@ async function judgeHandler({ state, questions, images, timeout_ms, model }, ctx
   // Serialize once and measure UTF-8 bytes (Buffer.byteLength), not UTF-16
   // code units, so non-ASCII payloads cannot slip past the cap. Base64 image
   // bytes count against the same limit.
-  const serialized = JSON.stringify({ state: cleanState, questions: cleanQuestions, images });
+  const serialized = JSON.stringify({ state: cleanState, questions: cleanQuestions, images: cleanImages });
   if (Buffer.byteLength(serialized, "utf8") > MAX_PAYLOAD_BYTES) {
     return fallbackEnvelope("payload exceeds 256 KiB limit");
   }
@@ -241,7 +239,7 @@ async function judgeHandler({ state, questions, images, timeout_ms, model }, ctx
             const payload = await cloudflareJudge({
               state: args.state,
               questions: args.questions,
-              images: args.images,
+              images: cleanImages,
               model: args.model,
               timeout_ms: args.timeout_ms,
               signal: c?.signal,
@@ -252,7 +250,7 @@ async function judgeHandler({ state, questions, images, timeout_ms, model }, ctx
           }
         }
       : typesafeJudge;
-  return dispatch({ state: cleanState, questions: cleanQuestions, images, timeout_ms, model }, ctx);
+  return dispatch({ state: cleanState, questions: cleanQuestions, images: cleanImages, timeout_ms, model }, ctx);
 }
 
 // Build the McpServer with the judge tool registered. Shared by both

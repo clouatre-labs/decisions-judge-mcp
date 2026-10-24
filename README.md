@@ -170,7 +170,7 @@ mcp:
 | --- | --- | --- |
 | `state` | object \| string \| array | JSON application state to judge |
 | `questions` | map | name → question spec (see below) |
-| `images` | map, optional | name → `{data, media_type}` where `data` is base64 PNG/JPEG bytes and `media_type` is `image/png` or `image/jpeg`. Referenced by box questions via `<name>` in instructions; images are accepted only in this top-level map |
+| `images` | map, optional | name → `{data}` where `data` is base64 PNG/JPEG bytes. The API detects PNG vs JPEG from the file bytes, so no media type field is needed. Referenced by box questions via `<name>` in instructions; images are accepted only in this top-level map |
 | `timeout_ms` | number, optional | max 60000 |
 | `model` | string, optional | override the resolved model. The TypeSafe path defaults to `jev-1.14.0`. Bumping this pin is a manual responsibility: update `DEFAULT_MODEL` in `providers/typesafe-api.mjs`. Automated upgrade PRs were not possible because the only version source (TypeSafe `GET /v1/models`, https://docs.typesafe.ai/api/list-models.md) requires Bearer auth, which Renovate custom datasources cannot supply; the Cloudflare path defaults to `typesafe/jev` |
 
@@ -201,8 +201,7 @@ not apply EXIF orientation, so pre-orient images before sending. Example:
   },
   "images": {
     "screenshot": {
-      "data": "<base64 PNG or JPEG bytes>",
-      "media_type": "image/png"
+      "data": "<base64 PNG or JPEG bytes>"
     }
   }
 }
