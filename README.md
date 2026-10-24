@@ -92,7 +92,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to regenerate the demo.
       "probabilities": { "merge": 0.97, "iterate": 0.02, "escalate": 0.01 }
     }
   },
-  "model": "jev-latest",
+  "model": "jev-1.14.0",
   "usage": { "input_tokens": 214, "output_tokens": 18 },
   "fallback": false
 }
@@ -170,8 +170,9 @@ mcp:
 | --- | --- | --- |
 | `state` | object \| string \| array | JSON application state to judge |
 | `questions` | map | name → question spec (see below) |
+| `images` | map, optional | name → `{data, media_type}` where `data` is base64 PNG/JPEG bytes and `media_type` is `image/png` or `image/jpeg`. Referenced by box questions via `<name>` in instructions; images are accepted only in this top-level map |
 | `timeout_ms` | number, optional | max 60000 |
-| `model` | string, optional | override the resolved model (e.g. `jev-latest`, or pin `jev-1.14.0` for reproducible decisions) |
+| `model` | string, optional | override the resolved model. The TypeSafe path defaults to `jev-1.14.0`. Bumping this pin is a manual responsibility: update `DEFAULT_MODEL` in `providers/typesafe-api.mjs`. Automated upgrade PRs were not possible because the only version source (TypeSafe `GET /v1/models`, https://docs.typesafe.ai/api/list-models.md) requires Bearer auth, which Renovate custom datasources cannot supply; the Cloudflare path defaults to `typesafe/jev` |
 
 Instructions and criteria values accept either plain strings or arbitrary JSON
 structure (objects/arrays). In-flight requests are cancelled when the client
@@ -182,6 +183,30 @@ disconnects.
 | `noul` | omit | yes/no probability |
 | `choice` | `{option: description\|null}` | winning option name |
 | `score` | ordered array of level descriptions | best matching level |
+| `box` | omit; instructions must reference an image as `<name>` | `{type, box: {top, bottom, left, right}, confidence}` |
+
+Box questions require the top-level `images` map and are supported only on the
+default `typesafe-api` provider (the Cloudflare provider returns a fallback
+envelope naming the unsupported feature). The API strips image metadata and does
+not apply EXIF orientation, so pre-orient images before sending. Example:
+
+```jsonc
+{
+  "state": { "page": "checkout" },
+  "questions": {
+    "pay_button": {
+      "type": "box",
+      "instructions": "Locate the pay button in <screenshot>"
+    }
+  },
+  "images": {
+    "screenshot": {
+      "data": "<base64 PNG or JPEG bytes>",
+      "media_type": "image/png"
+    }
+  }
+}
+```
 
 Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failure — failures never block agent workflows. A `noul` answer is a probability, not a verdict: pick your own action threshold in the caller (e.g. proceed only above 0.7).
 

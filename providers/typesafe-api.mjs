@@ -11,7 +11,12 @@
 //
 // Any failure returns { fallback: true, error: "..." } -- never blocks.
 
-import { RateLimitError, TypeSafeClient, choice, noul, score } from "@typesafe-ai/sdk";
+import { Image, RateLimitError, TypeSafeClient, box, choice, noul, score } from "@typesafe-ai/sdk";
+
+// Default model for the TypeSafe path, pinned so upgrades are explicit and
+// reviewable (a Renovate custom manager opens the bump PR). Caller model
+// overrides always win. The Cloudflare path keeps its own typesafe/jev default.
+export const DEFAULT_MODEL = "jev-1.14.0";
 
 // Parse the configured key list: TYPESAFE_API_KEYS CSV first, else
 // TYPESAFE_API_KEY and TYPESAFE_API_KEY_2..9. Segments are trimmed, empty
@@ -98,6 +103,33 @@ export function validateQuestionSpec(spec) {
   }
 }
 
+// Cross-checks between box questions and the top-level images map. Runs in
+// judgeHandler before any request so malformed box/images combinations return
+// the documented fallback error. A box question must carry instructions text
+// and reference at least one <name> present in the images map.
+export function validateImages(questions, images) {
+  const hasBox = Object.values(questions ?? {}).some((spec) => spec?.type === "box");
+  const imageNames = images && typeof images === "object" ? Object.keys(images) : [];
+  if (!hasBox) return;
+  if (imageNames.length === 0) {
+    throw new Error(
+      "box questions require the top-level images map (name -> {data, media_type})",
+    );
+  }
+  for (const spec of Object.values(questions)) {
+    if (spec?.type !== "box") continue;
+    if (typeof spec.instructions !== "string" || spec.instructions === "") {
+      throw new Error("box question requires instructions text referencing an image as <name>");
+    }
+    const refs = [...spec.instructions.matchAll(/<([^<>\s]+)>/g)].map((m) => m[1]);
+    if (!refs.some((name) => imageNames.includes(name))) {
+      throw new Error(
+        `box question instructions must reference at least one image name from the images map as <name> (available: ${imageNames.join(", ")})`,
+      );
+    }
+  }
+}
+
 function buildQuestion(spec) {
   validateQuestionSpec(spec);
   if (spec.type === "choice") {
@@ -106,6 +138,9 @@ function buildQuestion(spec) {
   if (spec.type === "score") {
     return score(spec.instructions, spec.criteria);
   }
+  if (spec.type === "box") {
+    return box(spec.instructions);
+  }
   return noul(spec.instructions, spec.criteria);
 }
 
@@ -113,7 +148,7 @@ function buildQuestion(spec) {
 // question specs, then the SDK question objects are constructed. On a rate
 // limit the request rotates through the remaining configured keys before any
 // fallback envelope is returned (no delay per attempt).
-export async function typesafeJudge({ state, questions, timeout_ms, model }, ctx) {
+export async function typesafeJudge({ state, questions, images, timeout_ms, model }, ctx) {
   let qmap;
   try {
     qmap = Object.fromEntries(
@@ -122,13 +157,39 @@ export async function typesafeJudge({ state, questions, timeout_ms, model }, ctx
   } catch (err) {
     return fallbackFrom(err, "question construction failed");
   }
-  const request = { state, questions: qmap };
-  if (model) request.model = model;
-  const options = (timeout_ms || ctx?.signal) ? { timeout: timeout_ms, signal: ctx?.signal } : undefined;
+  const request = { state, questions: qmap, model: model ?? DEFAULT_MODEL };
+  // Assets are built only from image names actually referenced by box
+  // instructions; every asset sent must appear in the request or the SDK
+  // rejects before sending. Image bytes are decoded from the top-level
+  // images map only -- never from questions or state.
+  const imageNames = images && typeof images === "object" ? Object.keys(images) : [];
+  const referenced = new Set();
+  for (const spec of Object.values(questions)) {
+    if (spec?.type !== "box" || typeof spec.instructions !== "string") continue;
+    for (const match of spec.instructions.matchAll(/<([^<>\s]+)>/g)) {
+      if (imageNames.includes(match[1])) referenced.add(match[1]);
+    }
+  }
+  if (referenced.size > 0) {
+    try {
+      request.assets = Object.fromEntries(
+        [...referenced].map((name) => [name, Image.fromBase64(images[name].data)]),
+      );
+    } catch (err) {
+      return fallbackFrom(err, "image decoding failed");
+    }
+  }
+  const options = {};
+  if (timeout_ms) options.timeout = timeout_ms;
+  if (ctx?.signal) options.signal = ctx.signal;
+  if (referenced.size > 0) {
+    // Required by the API for any request carrying box questions.
+    options.headers = { "TypeSafe-Danger-Zone-Images": "true" };
+  }
   let lastErr;
   for (const key of parseKeys()) {
     try {
-      const result = await getClient(key).systemOne(request, options);
+      const result = await getClient(key).systemOne(request, Object.keys(options).length > 0 ? options : undefined);
       return envelope({
         answers: result.answers,
         model: result.model,

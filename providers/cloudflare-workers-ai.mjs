@@ -61,7 +61,19 @@ function isPlainObject(value) {
   return Object.prototype.toString.call(value) === "[object Object]";
 }
 
-export async function cloudflareJudge({ state, questions, model, timeout_ms, signal }) {
+export async function cloudflareJudge({ state, questions, images, model, timeout_ms, signal }) {
+  // Box questions and images are TypeSafe-path only; fail closed with the
+  // standard fallback payload (the caller wraps it in the MCP envelope) and
+  // never send image bytes to this provider.
+  const hasBox = Object.values(questions ?? {}).some((spec) => spec?.type === "box");
+  const hasImages = images != null && typeof images === "object" && Object.keys(images).length > 0;
+  if (hasBox || hasImages) {
+    return {
+      fallback: true,
+      error:
+        "the cloudflare-workers-ai provider does not support box questions or images; use the default typesafe-api provider",
+    };
+  }
   const token = process.env.CLOUDFLARE_API_TOKEN;
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   if (!token) {
