@@ -12,33 +12,14 @@ concurrency:
 permissions: {}
 
 jobs:
-  commitlint:
+  lint-commits:
     name: Lint Commits
-    runs-on: ubuntu-26.04-arm
-    if: github.event_name == 'pull_request'
-    timeout-minutes: 5
     permissions:
       contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
-      - name: Set up Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with:
-          node-version: "26"
-      - name: Install commitlint
-        run: |
-          npm install --no-save \
-            @commitlint/cli@20.5.3 \
-            @commitlint/config-conventional@20.5.3
-      - name: Validate commit messages
-        run: |
-          npx commitlint \
-            --from ${{ github.event.pull_request.base.sha }} \
-            --to ${{ github.event.pull_request.head.sha }} \
-            --verbose
+    uses: clouatre-labs/.github/.github/workflows/lint-commits.yml@c546e09adb87caef81ae109cb3c27d016bea0fae # reusable lint-commits
+    with:
+      base-sha: ${{ github.event.pull_request.base.sha }}
+      head-sha: ${{ github.event.pull_request.head.sha }}
 
   test:
     name: Test
@@ -91,7 +72,7 @@ jobs:
     runs-on: ubuntu-26.04-arm
     if: always()
     permissions: {}
-    needs: [commitlint, test, lint-docs]
+    needs: [lint-commits, test, lint-docs]
     steps:
       - name: Verify all jobs passed or were skipped
         run: |
