@@ -6,7 +6,7 @@
 
 **Typed decisions for AI agents, as an MCP tool.** Ask yes/no probability (`noul`), choice among options, or score on ordered levels about any JSON application state — all questions answered in one fast request.
 
-Backed by the [TypeSafe System One](https://typesafe.ai) model (Jev) via [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk), with an opt-in [Cloudflare Workers AI](https://developers.cloudflare.com/ai/models/typesafe/jev/) provider — see [Providers](#providers).
+Backed by the [TypeSafe System One](https://typesafe.ai) decision model (Jev) via [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk), with an opt-in [Cloudflare Workers AI](https://developers.cloudflare.com/ai/models/typesafe/jev/) provider — see [Providers](#providers). Further reading on decision-model patterns, from the author's [blog](https://clouatre.ca/blog/).
 
 ## Get started
 
@@ -34,13 +34,9 @@ By default the server speaks stdio. Set `JUDGE_TRANSPORT=http` to serve the MCP 
 JUDGE_TRANSPORT=http HTTP_HOST=127.0.0.1 HTTP_PORT=8080 npx -y decisions-judge-mcp
 ```
 
-- `JUDGE_TRANSPORT`: `stdio` (default) or `http`. Any other value exits with an error.
-- `HTTP_HOST`: bind address, default `127.0.0.1`.
-- `HTTP_PORT`: port, default `8080`; must be 1-65535.
+`JUDGE_TRANSPORT` is `stdio` (default) or `http`; any other value exits with an error. `HTTP_HOST` is the bind address, default `127.0.0.1`; `HTTP_PORT` defaults to `8080` and must be 1-65535.
 
-Serving is stateless: each request is handled independently, with no protocol-level sessions (`GET`/`DELETE` on `/mcp` return 405).
-
-A `GET /health` endpoint returns `200` with `{provider, transport, keys}` for liveness checks; it does not shadow `/mcp` routing.
+Serving is stateless: each request is handled independently, with no protocol-level sessions (`GET`/`DELETE` on `/mcp` return 405). A `GET /health` endpoint returns `200` with `{provider, transport, keys}` for liveness checks; it does not shadow `/mcp` routing.
 
 **Security warning:** the HTTP endpoint is unauthenticated. Production remote deployments must be fronted by an authenticating OAuth 2.1 proxy per the MCP 2026-07-28 authorization specification.
 
@@ -100,7 +96,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to regenerate the demo.
 
 ## Quickstart
 
-Requires Node >= 22 and at least one TypeSafe API key in the environment via `TYPESAFE_API_KEYS`, `TYPESAFE_API_KEY`, or `TYPESAFE_API_KEY_2` .. `TYPESAFE_API_KEY_9`.
+Requires Node >= 22 and at least one TypeSafe API key (see [Configuration](#configuration)).
 
 ```sh
 npx -y decisions-judge-mcp          # latest
@@ -109,25 +105,15 @@ npx -y decisions-judge-mcp@1.3.0    # pinned, for supply-chain reproducibility
 
 ## Configuration
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `TYPESAFE_API_KEY` \| `TYPESAFE_API_KEYS` \| `TYPESAFE_API_KEY_2` .. `TYPESAFE_API_KEY_9` | one of these for `typesafe-api` | — | TypeSafe API key(s), used by the default `typesafe-api` provider. `TYPESAFE_API_KEYS` (comma-separated, tried in order with rotation on rate limits 429/529) takes precedence over `TYPESAFE_API_KEY` / `TYPESAFE_API_KEY_N`; the numbered vars fill in after `TYPESAFE_API_KEY` when `TYPESAFE_API_KEYS` is unset |
-| `JUDGE_PROVIDER` | no | `typesafe-api` | Provider selector: `typesafe-api` or `cloudflare-workers-ai`. Read once at startup |
-| `CLOUDFLARE_API_TOKEN` | only for `cloudflare-workers-ai` | — | Cloudflare token with `Account -> Workers AI -> Edit` permission |
-| `CLOUDFLARE_ACCOUNT_ID` | only for `cloudflare-workers-ai` | — | 32-character hex Cloudflare account id |
+- **TypeSafe API keys** (`TYPESAFE_API_KEY` | `TYPESAFE_API_KEYS` | `TYPESAFE_API_KEY_2` .. `TYPESAFE_API_KEY_9`): required for the default `typesafe-api` provider. `TYPESAFE_API_KEYS` (comma-separated, tried in order with rotation on rate limits 429/529) takes precedence over `TYPESAFE_API_KEY` / `TYPESAFE_API_KEY_N`; the numbered vars fill in after `TYPESAFE_API_KEY` when `TYPESAFE_API_KEYS` is unset.
+- **`JUDGE_PROVIDER`** (default `typesafe-api`): provider selector, `typesafe-api` or `cloudflare-workers-ai`; read once at startup.
+- **`CLOUDFLARE_API_TOKEN`** / **`CLOUDFLARE_ACCOUNT_ID`** (only for `cloudflare-workers-ai`): a Cloudflare token with `Account -> Workers AI -> Edit` permission, and the 32-character hex Cloudflare account id.
 
-Invalid `JUDGE_PROVIDER` values, or `cloudflare-workers-ai` selected with missing
-Cloudflare credentials, fail fast at startup (non-zero exit naming the offending
-variable).
+Invalid `JUDGE_PROVIDER` values, or `cloudflare-workers-ai` selected with missing Cloudflare credentials, fail fast at startup (non-zero exit naming the offending variable).
 
-Selecting `typesafe-api` with no key configured prints a startup warning (the
-server still runs; judge calls return fallback envelopes) instead of exiting.
-When multiple keys are configured, a rate-limited request (HTTP 429/529) is
-rotated to the next key before any fallback envelope is returned.
+Selecting `typesafe-api` with no key configured prints a startup warning (the server still runs; judge calls return fallback envelopes) instead of exiting. When multiple keys are configured, a rate-limited request (HTTP 429/529) is rotated to the next key before any fallback envelope is returned.
 
 ## MCP client configuration
-
-All examples use `npx -y`, the standard pattern for Node-based MCP servers. Swap in `decisions-judge-mcp@<version>` in the `args` if you prefer pinning.
 
 **Claude Code** (one command):
 
@@ -150,33 +136,13 @@ mcp:
         TYPESAFE_API_KEY: "..."
 ```
 
-**pi** (`~/.config/pi/mcp.json` or equivalent):
-
-```json
-{
-  "mcpServers": {
-    "decisions-judge": {
-      "command": "npx",
-      "args": ["-y", "decisions-judge-mcp"],
-      "env": { "TYPESAFE_API_KEY": "..." }
-    }
-  }
-}
-```
+**pi** (`~/.config/pi/mcp.json` or equivalent): same JSON shape as [Get started](#get-started), pointing your coding agent's MCP config at the same command and env.
 
 ## Tool reference: `judge`
 
-| Input | Type | Description |
-| --- | --- | --- |
-| `state` | object \| string \| array | JSON application state to judge |
-| `questions` | map | name → question spec (see below) |
-| `images` | map, optional | name → `{data}` where `data` is base64 PNG/JPEG bytes. The API detects PNG vs JPEG from the file bytes, so no media type field is needed. Referenced by box questions via `<name>` in instructions; images are accepted only in this top-level map, and every entry must be referenced by at least one box question |
-| `timeout_ms` | number, optional | max 60000 |
-| `model` | string, optional | override the resolved model. The TypeSafe path defaults to `jev-1.14.0` (pinned; bumping is manual -- see `DEFAULT_MODEL` in `providers/typesafe-api.mjs`); the Cloudflare path defaults to `typesafe/jev` |
+Inputs: `state` (object \| string \| array — the JSON application state to judge), `questions` (map of name → question spec, see below), `images` (optional map of name → `{data}`, where `data` is base64 PNG/JPEG bytes; the API detects PNG vs JPEG from the file bytes, so no media type field is needed; entries are referenced by box questions via `<name>` in instructions, images are accepted only in this top-level map, and every entry must be referenced by at least one box question), `timeout_ms` (optional number, max 60000), and `model` (optional override of the resolved model; the TypeSafe path defaults to `jev-1.14.0`, pinned — bumping is manual, see `DEFAULT_MODEL` in `providers/typesafe-api.mjs`; the Cloudflare path defaults to `typesafe/jev`).
 
-Instructions and criteria values accept either plain strings or arbitrary JSON
-structure (objects/arrays). In-flight requests are cancelled when the client
-disconnects.
+Instructions and criteria values accept either plain strings or arbitrary JSON structure (objects/arrays). In-flight requests are cancelled when the client disconnects.
 
 | Question type | `criteria` | Answer |
 | --- | --- | --- |
@@ -185,10 +151,7 @@ disconnects.
 | `score` | ordered array of level descriptions | best matching level |
 | `box` | omit; instructions must reference an image as `<name>` | `{type, box: {top, bottom, left, right}, confidence}` |
 
-Box questions require the top-level `images` map and are supported only on the
-default `typesafe-api` provider (the Cloudflare provider returns a fallback
-envelope naming the unsupported feature). The API strips image metadata and does
-not apply EXIF orientation, so pre-orient images before sending. Example:
+Box questions require the top-level `images` map and are supported only on the default `typesafe-api` provider (the Cloudflare provider returns a fallback envelope naming the unsupported feature). The API strips image metadata and does not apply EXIF orientation, so pre-orient images before sending. Example:
 
 ```jsonc
 {
@@ -275,10 +238,7 @@ Fill in the state and send it to the judge tool.
 
 ## Providers
 
-Selected once at startup via `JUDGE_PROVIDER` (default `typesafe-api`). The judge tool's schema and behavior are identical under both providers.
-
-- `typesafe-api` (default): uses `@typesafe-ai/sdk` with one or more TypeSafe API keys (`TYPESAFE_API_KEYS` CSV, `TYPESAFE_API_KEY`, or `TYPESAFE_API_KEY_2` .. `TYPESAFE_API_KEY_9`); keys are tried in order with rotation on rate limits. See [Configuration](#configuration) for details.
-- `cloudflare-workers-ai`: routes the same Jev model through Cloudflare Workers AI; requires the two Cloudflare variables above.
+Selected once at startup via `JUDGE_PROVIDER` (default `typesafe-api`); the judge tool's schema and behavior are identical under both providers. `typesafe-api` uses `@typesafe-ai/sdk` with one or more TypeSafe API keys (rotation details in [Configuration](#configuration)); `cloudflare-workers-ai` routes the same Jev model through Cloudflare Workers AI and requires the two Cloudflare variables above.
 
 Billing gotcha: `typesafe/jev` is a partner model on Cloudflare, so runs are metered from the **AI Gateway prepaid credit balance**, not the account's payment card. Accounts with a valid card but zero credit balance get HTTP 402 (error 2021, "Insufficient balance"); top up AI Gateway prepaid credit before calling.
 
@@ -294,7 +254,7 @@ node scripts/smoke-judge.mjs   # judge fallback envelope (no API key needed)
 node server.mjs                # stdio server; needs TYPESAFE_API_KEY to answer
 ```
 
-Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clouatre-labs/agentic-coder-skill).
+Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clouatre-labs/agentic-coder-skill), which uses `judge` for subagent orchestration and context-window decisions inside an agent harness.
 
 ## License
 
