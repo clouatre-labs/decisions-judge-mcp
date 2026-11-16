@@ -12,6 +12,14 @@
 const CF_RETRY_LIMIT = 2;
 const CF_BACKOFF_MS = 500;
 
+// Pinned default model; bare jev-* overrides are prefixed with typesafe/ so
+// the Workers AI run endpoint accepts them.
+export const CF_DEFAULT_MODEL = "typesafe/jev-1.14.0";
+export function normalizeCfModel(model) {
+  if (!model) return CF_DEFAULT_MODEL;
+  return /^jev-/.test(model) ? `typesafe/${model}` : model;
+}
+
 // Cloudflare account ids are 32 hex chars; reject anything else (empty,
 // whitespace, path-unsafe characters) before URL interpolation.
 const CF_ACCOUNT_ID_RE = /^[a-f0-9]{32}$/i;
@@ -89,7 +97,7 @@ export async function cloudflareJudge({ state, questions, model, timeout_ms, sig
     if (controller.signal.aborted) throw new Error("request aborted");
     const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run`;
     const body = JSON.stringify({
-      model: model ?? "typesafe/jev",
+      model: normalizeCfModel(model),
       input: { state, questions },
     });
     let lastErr = null;
@@ -170,7 +178,7 @@ export async function cloudflareJudge({ state, questions, model, timeout_ms, sig
       }
       return {
         answers: evaluation.answers,
-        model: evaluation.model ?? model ?? "typesafe/jev",
+        model: evaluation.model ?? normalizeCfModel(model),
         usage: evaluation.usage,
         fallback: false,
       };

@@ -22,7 +22,7 @@
 
 import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/server";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import { cloudflareJudge } from "./providers/cloudflare-workers-ai.mjs";
 import { REGISTERED_PROMPTS } from "./prompts.mjs";
@@ -307,6 +307,7 @@ function buildServer() {
   return server;
 }
 
-const server = buildServer();
-const transport = new StdioServerTransport();
-await server.connect(transport);
+// serveStdio owns per-connection factory instantiation and MCP era
+// negotiation (protocolVersion), including the modern-only server/discover
+// handler; legacy-pinned clients keep working (default legacy mode: serve).
+await serveStdio(() => buildServer());
