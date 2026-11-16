@@ -19,8 +19,11 @@ import { RateLimitError, TypeSafeClient, choice, noul, score } from "@typesafe-a
 // which no Renovate custom datasource format parses. If TypeSafe publishes
 // a machine-readable version feed (typesafe-ai/typesafe-sdk-js#22), a
 // customDatasources rule makes this automatic.
-// Caller model overrides always win.
-export const DEFAULT_MODEL = "jev-1.14.0";
+// Caller model overrides always win over the default; TYPESAFE_DEFAULT_MODEL
+// (read once at module load) overrides the pinned default on this typesafe
+// path only -- the Cloudflare CF_DEFAULT_MODEL pin is unaffected, and there
+// is deliberately no floor check on the env value.
+export const DEFAULT_MODEL = process.env.TYPESAFE_DEFAULT_MODEL || "jev-1.14.0";
 
 // Single lazily-created client for the process lifetime, relying on the SDK's
 // default retry policy (408/429/5xx with Retry-After respected). logLevel
@@ -110,19 +113,16 @@ export async function typesafeJudge({ state, questions, timeout_ms, model }, ctx
     return fallbackFrom(err, "question construction failed");
   }
   const request = { state, questions: qmap, model: model ?? DEFAULT_MODEL };
-  const options = {};
   // timeout_ms caps the WHOLE request (SDK retries included), not each
-  // retry attempt: compose it with any caller signal via AbortSignal.any.
-  const signals = [
-    ctx?.signal,
-    timeout_ms ? AbortSignal.timeout(timeout_ms) : undefined,
-  ].filter(Boolean);
-  if (signals.length > 0) options.signal = AbortSignal.any(signals);
+  // retry attempt: compose it with any caller signal via AbortSignal.any
+  // (which tolerates zero or one signals). Single unconditional shape.
+  const options = {
+    signal: AbortSignal.any(
+      [ctx?.signal, timeout_ms ? AbortSignal.timeout(timeout_ms) : undefined].filter(Boolean),
+    ),
+  };
   try {
-    const result = await getClient().systemOne(
-      request,
-      Object.keys(options).length > 0 ? options : undefined,
-    );
+    const result = await getClient().systemOne(request, options);
     return envelope({
       answers: result.answers,
       model: result.model,

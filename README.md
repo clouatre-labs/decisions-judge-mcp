@@ -100,6 +100,7 @@ npx -y decisions-judge-mcp@1.3.0    # pinned, for supply-chain reproducibility
 - **`TYPESAFE_API_KEY`**: required for the default `typesafe-api` provider. Retry on rate limits (429) and transient errors (408/5xx) is owned by the SDK default retry policy.
 - **`JUDGE_PROVIDER`** (default `typesafe-api`): provider selector, `typesafe-api` or `cloudflare-workers-ai`; read once at startup.
 - **`CLOUDFLARE_API_TOKEN`** / **`CLOUDFLARE_ACCOUNT_ID`** (only for `cloudflare-workers-ai`): a Cloudflare token with `Account -> Workers AI -> Edit` permission, and the 32-character hex Cloudflare account id.
+- **`TYPESAFE_DEFAULT_MODEL`** (optional, `typesafe-api` provider only): overrides the pinned default model (`jev-1.14.0`) when the caller passes no `model` input. A caller `model` input always wins over the env value. The Cloudflare path's pinned default (`typesafe/jev-1.14.0`) is unaffected.
 
 Invalid `JUDGE_PROVIDER` values, or `cloudflare-workers-ai` selected with missing Cloudflare credentials, fail fast at startup (non-zero exit naming the offending variable).
 
@@ -132,7 +133,7 @@ mcp:
 
 ## Tool reference: `judge`
 
-Inputs: `state` (object \| string \| array — the JSON application state to judge), `questions` (map of name → question spec, see below), `timeout_ms` (optional number, max 60000), and `model` (optional override of the resolved model; the TypeSafe path defaults to `jev-1.14.0`, pinned — bumping is manual, see `DEFAULT_MODEL` in `providers/typesafe-api.mjs`; the Cloudflare path defaults to `typesafe/jev`).
+Inputs: `state` (object \| string \| array — the JSON application state to judge), `questions` (map of name → question spec, see below), `timeout_ms` (optional number, max 60000), and `model` (optional override of the resolved model; the TypeSafe path defaults to `DEFAULT_MODEL` (`jev-1.14.0`), overridable via `TYPESAFE_DEFAULT_MODEL` — see [Configuration](#configuration); the Cloudflare path defaults to `typesafe/jev`).
 
 Instructions and criteria values accept either plain strings or arbitrary JSON structure (objects/arrays). In-flight requests are cancelled when the client disconnects.
 
