@@ -26,17 +26,9 @@ Add to `claude_desktop_config.json` (`~/Library/Application Support/Claude/`) �
 
 Then ask your agent anything answerable with a judgment — it can call the `judge` tool.
 
-## Remote transport (opt-in)
+## Transport
 
-By default the server speaks stdio. Set `JUDGE_TRANSPORT=http` to serve the MCP Streamable HTTP transport (spec revision 2026-07-28) at `POST /mcp` instead:
-
-```sh
-JUDGE_TRANSPORT=http HTTP_HOST=127.0.0.1 HTTP_PORT=8080 npx -y decisions-judge-mcp
-```
-
-`JUDGE_TRANSPORT` is `stdio` (default) or `http`; any other value exits with an error. `HTTP_HOST` is the bind address, default `127.0.0.1`; `HTTP_PORT` defaults to `8080` and must be 1-65535.
-
-Serving is stateless: each request is handled independently, with no protocol-level sessions (`GET`/`DELETE` on `/mcp` return 405). A `GET /health` endpoint returns `200` with `{provider, transport, keys}` for liveness checks; it does not shadow `/mcp` routing.
+The server speaks stdio only: newline-delimited JSON-RPC over stdin/stdout, for local MCP clients (Claude Code, codex, goose, pi).
 
 **Security warning:** the HTTP endpoint is unauthenticated. Production remote deployments must be fronted by an authenticating OAuth 2.1 proxy per the MCP 2026-07-28 authorization specification.
 
@@ -105,13 +97,13 @@ npx -y decisions-judge-mcp@1.3.0    # pinned, for supply-chain reproducibility
 
 ## Configuration
 
-- **TypeSafe API keys** (`TYPESAFE_API_KEY` | `TYPESAFE_API_KEYS` | `TYPESAFE_API_KEY_2` .. `TYPESAFE_API_KEY_9`): required for the default `typesafe-api` provider. `TYPESAFE_API_KEYS` (comma-separated, tried in order with rotation on rate limits 429/529) takes precedence over `TYPESAFE_API_KEY` / `TYPESAFE_API_KEY_N`; the numbered vars fill in after `TYPESAFE_API_KEY` when `TYPESAFE_API_KEYS` is unset.
+- **`TYPESAFE_API_KEY`**: required for the default `typesafe-api` provider. Retry on rate limits (429) and transient errors (408/5xx) is owned by the SDK default retry policy.
 - **`JUDGE_PROVIDER`** (default `typesafe-api`): provider selector, `typesafe-api` or `cloudflare-workers-ai`; read once at startup.
 - **`CLOUDFLARE_API_TOKEN`** / **`CLOUDFLARE_ACCOUNT_ID`** (only for `cloudflare-workers-ai`): a Cloudflare token with `Account -> Workers AI -> Edit` permission, and the 32-character hex Cloudflare account id.
 
 Invalid `JUDGE_PROVIDER` values, or `cloudflare-workers-ai` selected with missing Cloudflare credentials, fail fast at startup (non-zero exit naming the offending variable).
 
-Selecting `typesafe-api` with no key configured prints a startup warning (the server still runs; judge calls return fallback envelopes) instead of exiting. When multiple keys are configured, a rate-limited request (HTTP 429/529) is rotated to the next key before any fallback envelope is returned.
+Selecting `typesafe-api` with no key configured prints a startup warning (the server still runs; judge calls return fallback envelopes) instead of exiting.
 
 ## MCP client configuration
 
@@ -140,7 +132,7 @@ mcp:
 
 ## Tool reference: `judge`
 
-Inputs: `state` (object \| string \| array — the JSON application state to judge), `questions` (map of name → question spec, see below), `images` (optional map of name → `{data}`, where `data` is base64 PNG/JPEG bytes; the API detects PNG vs JPEG from the file bytes, so no media type field is needed; entries are referenced by box questions via `<name>` in instructions, images are accepted only in this top-level map, and every entry must be referenced by at least one box question), `timeout_ms` (optional number, max 60000), and `model` (optional override of the resolved model; the TypeSafe path defaults to `jev-1.14.0`, pinned — bumping is manual, see `DEFAULT_MODEL` in `providers/typesafe-api.mjs`; the Cloudflare path defaults to `typesafe/jev`).
+Inputs: `state` (object \| string \| array — the JSON application state to judge), `questions` (map of name → question spec, see below), `timeout_ms` (optional number, max 60000), and `model` (optional override of the resolved model; the TypeSafe path defaults to `jev-1.14.0`, pinned — bumping is manual, see `DEFAULT_MODEL` in `providers/typesafe-api.mjs`; the Cloudflare path defaults to `typesafe/jev`).
 
 Instructions and criteria values accept either plain strings or arbitrary JSON structure (objects/arrays). In-flight requests are cancelled when the client disconnects.
 
@@ -149,26 +141,6 @@ Instructions and criteria values accept either plain strings or arbitrary JSON s
 | `noul` | omit | yes/no probability |
 | `choice` | `{option: description\|null}` | winning option name |
 | `score` | ordered array of level descriptions | best matching level |
-| `box` | omit; instructions must reference an image as `<name>` | `{type, box: {top, bottom, left, right}, confidence}` |
-
-Box questions require the top-level `images` map and are supported only on the default `typesafe-api` provider (the Cloudflare provider returns a fallback envelope naming the unsupported feature). The API strips image metadata and does not apply EXIF orientation, so pre-orient images before sending. Example:
-
-```jsonc
-{
-  "state": { "page": "checkout" },
-  "questions": {
-    "pay_button": {
-      "type": "box",
-      "instructions": "Locate the pay button in <screenshot>"
-    }
-  },
-  "images": {
-    "screenshot": {
-      "data": "<base64 PNG or JPEG bytes>"
-    }
-  }
-}
-```
 
 Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failure — failures never block agent workflows. A `noul` answer is a probability, not a verdict: pick your own action threshold in the caller (e.g. proceed only above 0.7).
 
@@ -176,7 +148,7 @@ Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failu
 
 Jev answers short, well-framed questions better than terse ones. A working reference implementation ([LamplighterPaul/jev-piano](https://github.com/LamplighterPaul/jev-piano)) demonstrates the idiom.
 
-Four patterns, all applicable to the four question types (`noul`, `choice`, `score`, `box`):
+Four patterns, all applicable to the three question types (`noul`, `choice`, `score`):
 
 1. **One decision per question ID.** Each entry in `questions` asks exactly one concept. Don't bundle "is it correct and should we ship it" into a single `noul` — ask two questions.
 2. **Descriptive criteria strings.** Every choice option is described by its own intrinsic properties and trade-offs, never by position, index, or an endorsement of the desired answer. Describing one option as "lowest risk" and its rivals as problems is a hint; describing each option's genuine trade-off is not. The model should reach the answer from the state plus balanced descriptions.

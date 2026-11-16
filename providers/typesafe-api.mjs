@@ -4,14 +4,12 @@
 // TypeSafe System One API in a single request and returns the raw typed
 // answers plus model/usage metadata. Retries, timeouts, and model resolution
 // (pinned by DEFAULT_MODEL) are owned by @typesafe-ai/sdk. Client disconnects abort the
-// in-flight request. Auth: TYPESAFE_API_KEYS (CSV, first) or TYPESAFE_API_KEY
-// plus TYPESAFE_API_KEY_2..9. Keys are tried in order; on a rate limit
-// (429/529) the judge rotates to the next key. 429 is excluded from each
-// client's SDK retry policy so rotation owns rate-limit handling.
+// in-flight request. Auth: the SDK resolves TYPESAFE_API_KEY from the
+// environment.
 //
 // Any failure returns { fallback: true, error: "..." } -- never blocks.
 
-import { Image, RateLimitError, TypeSafeClient, box, choice, noul, score } from "@typesafe-ai/sdk";
+import { RateLimitError, TypeSafeClient, choice, noul, score } from "@typesafe-ai/sdk";
 
 // Default model for the TypeSafe path when the caller passes no `model`.
 // Bumping is a manual responsibility. Automated Renovate upgrades were
@@ -24,45 +22,18 @@ import { Image, RateLimitError, TypeSafeClient, box, choice, noul, score } from 
 // Caller model overrides always win.
 export const DEFAULT_MODEL = "jev-1.14.0";
 
-// Parse the configured key list: TYPESAFE_API_KEYS CSV first, else
-// TYPESAFE_API_KEY and TYPESAFE_API_KEY_2..9. Segments are trimmed, empty
-// segments dropped, and duplicates removed, preserving first-seen order.
-export function parseKeys(env = process.env) {
-  const raw = [];
-  if (env.TYPESAFE_API_KEYS !== undefined && env.TYPESAFE_API_KEYS !== "") {
-    raw.push(...env.TYPESAFE_API_KEYS.split(","));
-  } else {
-    raw.push(env.TYPESAFE_API_KEY ?? "");
-    for (let i = 2; i <= 9; i++) raw.push(env[`TYPESAFE_API_KEY_${i}`] ?? "");
-  }
-  const keys = [];
-  for (const segment of raw) {
-    const key = segment.trim();
-    if (key !== "" && !keys.includes(key)) keys.push(key);
-  }
-  return keys;
-}
-
-// Lazily-created clients cached per key for the process lifetime. 429 is
-// excluded from per-client retries so key rotation owns rate-limit handling;
-// the SDK keeps 408/5xx retries.
-const clientCache = new Map();
-function getClient(key) {
-  let client = clientCache.get(key);
-  if (!client) {
-    client = new TypeSafeClient({
-      apiKey: key,
-      logLevel: "off",
-      retry: { httpStatuses: [408, 500, 502, 503, 504], respectRetryAfter: false },
-    });
-    clientCache.set(key, client);
-  }
+// Single lazily-created client for the process lifetime, relying on the SDK's
+// default retry policy (408/429/5xx with Retry-After respected). logLevel
+// "off" keeps stdout clean for stdio MCP framing.
+let client;
+function getClient() {
+  if (!client) client = new TypeSafeClient({ logLevel: "off" });
   return client;
 }
 
-// Rate-limit test shared by fallbackFrom and the rotation loop: only 429 maps
-// to RateLimitError in the SDK; 529 arrives as a generic error with .status,
-// so the status checks are load-bearing.
+// Rate-limit test used by fallbackFrom: only 429 maps to RateLimitError in
+// the SDK; 529 arrives as a generic error with .status, so the status checks
+// are load-bearing.
 export function isRateLimit(err) {
   return err instanceof RateLimitError || err?.status === 429 || err?.status === 529;
 }
@@ -109,41 +80,6 @@ export function validateQuestionSpec(spec) {
   }
 }
 
-// Cross-checks between box questions and the top-level images map. Runs in
-// judgeHandler before any request so malformed box/images combinations return
-// the documented fallback error. Each box question must reference at least
-// one <name> from the images map, and every images entry must be referenced
-// by at least one box question.
-export function validateImages(questions, images) {
-  const boxSpecs = Object.values(questions ?? {}).filter((spec) => spec?.type === "box");
-  const imageNames = images && typeof images === "object" ? Object.keys(images) : [];
-  if (boxSpecs.length > 0 && imageNames.length === 0) {
-    throw new Error(
-      "box questions require the top-level images map (name -> {data})",
-    );
-  }
-  const referenced = new Set();
-  for (const spec of boxSpecs) {
-    if (typeof spec.instructions !== "string" || spec.instructions === "") {
-      throw new Error("box question requires instructions text referencing an image as <name>");
-    }
-    const refs = [...spec.instructions.matchAll(/<([^<>\s]+)>/g)].map((m) => m[1]);
-    for (const r of refs) referenced.add(r);
-    if (!refs.some((name) => imageNames.includes(name))) {
-      throw new Error(
-        `box question instructions must reference at least one image name from the images map as <name> (available: ${imageNames.join(", ")})`,
-      );
-    }
-  }
-  for (const name of imageNames) {
-    if (!referenced.has(name)) {
-      throw new Error(
-        `images map entry "${name}" is not referenced by any box question as <name>; images are accepted only for box questions`,
-      );
-    }
-  }
-}
-
 function buildQuestion(spec) {
   validateQuestionSpec(spec);
   if (spec.type === "choice") {
@@ -152,17 +88,13 @@ function buildQuestion(spec) {
   if (spec.type === "score") {
     return score(spec.instructions, spec.criteria);
   }
-  if (spec.type === "box") {
-    return box(spec.instructions);
-  }
   return noul(spec.instructions, spec.criteria);
 }
 
 // Typesafe path (default): validateQuestionSpec (via buildQuestion) guards the
-// question specs, then the SDK question objects are constructed. On a rate
-// limit the request rotates through the remaining configured keys before any
-// fallback envelope is returned (no delay per attempt).
-export async function typesafeJudge({ state, questions, images, timeout_ms, model }, ctx) {
+// question specs, then the SDK question objects are constructed. Any failure
+// lands in the fallback envelope.
+export async function typesafeJudge({ state, questions, timeout_ms, model }, ctx) {
   let qmap;
   try {
     qmap = Object.fromEntries(
@@ -172,48 +104,21 @@ export async function typesafeJudge({ state, questions, images, timeout_ms, mode
     return fallbackFrom(err, "question construction failed");
   }
   const request = { state, questions: qmap, model: model ?? DEFAULT_MODEL };
-  // Assets are built only from image names actually referenced by box
-  // instructions; every asset sent must appear in the request or the SDK
-  // rejects before sending. Image bytes are decoded from the top-level
-  // images map only -- never from questions or state.
-  const imageNames = images && typeof images === "object" ? Object.keys(images) : [];
-  const referenced = new Set();
-  for (const spec of Object.values(questions)) {
-    if (spec?.type !== "box" || typeof spec.instructions !== "string") continue;
-    for (const match of spec.instructions.matchAll(/<([^<>\s]+)>/g)) {
-      if (imageNames.includes(match[1])) referenced.add(match[1]);
-    }
-  }
-  if (referenced.size > 0) {
-    try {
-      request.assets = Object.fromEntries(
-        [...referenced].map((name) => [name, Image.fromBase64(images[name].data)]),
-      );
-    } catch (err) {
-      return fallbackFrom(err, "image decoding failed");
-    }
-  }
   const options = {};
   if (timeout_ms) options.timeout = timeout_ms;
   if (ctx?.signal) options.signal = ctx.signal;
-  if (referenced.size > 0) {
-    // Required by the API for any request carrying box questions.
-    options.headers = { "TypeSafe-Danger-Zone-Images": "true" };
+  try {
+    const result = await getClient().systemOne(
+      request,
+      Object.keys(options).length > 0 ? options : undefined,
+    );
+    return envelope({
+      answers: result.answers,
+      model: result.model,
+      usage: result.usage,
+      fallback: false,
+    });
+  } catch (err) {
+    return fallbackFrom(err, "typesafe request failed");
   }
-  let lastErr;
-  for (const key of parseKeys()) {
-    try {
-      const result = await getClient(key).systemOne(request, Object.keys(options).length > 0 ? options : undefined);
-      return envelope({
-        answers: result.answers,
-        model: result.model,
-        usage: result.usage,
-        fallback: false,
-      });
-    } catch (err) {
-      lastErr = err;
-      if (!isRateLimit(err)) return fallbackFrom(err, "typesafe request failed");
-    }
-  }
-  return fallbackFrom(lastErr, "typesafe request failed");
 }

@@ -8,9 +8,7 @@ import { cloudflareJudge } from "../providers/cloudflare-workers-ai.mjs";
 import {
   DEFAULT_MODEL,
   fallbackFrom,
-  parseKeys,
   typesafeJudge,
-  validateImages,
 } from "../providers/typesafe-api.mjs";
 
 const TIMEOUT_MS = 10_000;
@@ -206,30 +204,6 @@ async function runOfflineCloudflareTests() {
       ok("cloudflare secret redaction");
     }
 
-    // Edge case: box questions and images are unsupported on this provider --
-    // fail closed with the fallback payload naming the unsupported feature,
-    // before any fetch (no image bytes ever sent).
-    {
-      let calls = 0;
-      globalThis.fetch = async () => {
-        calls++;
-        return fakeResponse({ body: COMPLETED_BODY });
-      };
-      const out = await cloudflareJudge({
-        ...judgeArgs,
-        questions: { locate: { type: "box", instructions: "Locate the pay button in <ui>" } },
-        images: { ui: { data: "aGk=" } },
-      });
-      if (
-        out.fallback !== true ||
-        !/box/.test(out.error ?? "") ||
-        !/images/.test(out.error ?? "") ||
-        calls !== 0
-      ) {
-        fail(`cloudflare box/images unsupported: unexpected result ${JSON.stringify(out)} calls=${calls}`);
-      }
-      ok(`cloudflare box/images rejected with fallback envelope (${out.error})`);
-    }
   } finally {
     globalThis.fetch = savedFetch;
     if (savedEnv.token === undefined) delete process.env.CLOUDFLARE_API_TOKEN;
@@ -239,14 +213,16 @@ async function runOfflineCloudflareTests() {
   }
 }
 
-// Offline typesafe coverage: typesafeJudge reads keys and clients from
-// providers/typesafe-api.mjs, whose per-key SDK clients default to the global
-// fetch -- so stubbing globalThis.fetch with real Response objects exercises
-// rotation and fallback without network access.
+// Offline typesafe coverage: typesafeJudge uses the single SDK client from
+// providers/typesafe-api.mjs, whose SDK client defaults to the global fetch --
+// so stubbing globalThis.fetch with real Response objects exercises retry and
+// fallback behavior without network access. The SDK default retry policy
+// (maxRetries 2 on 408/429/5xx) means a stubbed 429 can be observed up to
+// three times per judge call.
 async function runOfflineTypesafeTests() {
   const savedEnv = {};
   for (const name of Object.keys(process.env)) {
-    if (name === "TYPESAFE_API_KEYS" || /^TYPESAFE_API_KEY(_\d+)?$/.test(name)) {
+    if (/^TYPESAFE_API_KEY$/.test(name)) {
       savedEnv[name] = process.env[name];
       delete process.env[name];
     }
@@ -260,31 +236,44 @@ async function runOfflineTypesafeTests() {
     usage: { input_tokens: 1, output_tokens: 1 },
   };
   try {
-    // Happy path: first key rate-limited (429, no SDK retry), second key
-    // succeeds -- no fallback envelope.
+    // Happy path: well-formed response -> success envelope, one call.
     {
-      process.env.TYPESAFE_API_KEYS = "k1, k2";
-      const calls = [];
+      process.env.TYPESAFE_API_KEY = "solo";
+      let calls = 0;
       globalThis.fetch = async () => {
-        calls.push(1);
-        return calls.length === 1
-          ? json({ message: "slow down" }, 429)
-          : json(SUCCESS, 200);
+        calls++;
+        return json(SUCCESS, 200);
       };
       const out = (await typesafeJudge({ ...judgeArgs })).structuredContent;
       if (out.fallback !== false || out.answers?.is_bug?.noul !== 0.9) {
-        fail(`typesafe rotation: unexpected result ${JSON.stringify(out)}`);
+        fail(`typesafe happy path: unexpected result ${JSON.stringify(out)}`);
       }
-      if (calls.length !== 2) {
-        fail(`typesafe rotation: expected 2 fetch calls, got ${calls.length}`);
-      }
-      ok("typesafe rotation on 429 to second key");
+      if (calls !== 1) fail(`typesafe happy path: expected 1 fetch call, got ${calls}`);
+      ok("typesafe happy path");
     }
 
-    // Edge case: every key rate-limited -> fallback with actionable text;
-    // 429 must not be retried per-client (one call per key).
+    // Edge case: a single 429 is retried by the SDK default policy and the
+    // next attempt succeeds -- no fallback envelope.
     {
-      process.env.TYPESAFE_API_KEYS = "k1, k2";
+      process.env.TYPESAFE_API_KEY = "retry";
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls++;
+        return calls === 1 ? json({ message: "slow down" }, 429) : json(SUCCESS, 200);
+      };
+      const out = (await typesafeJudge({ ...judgeArgs })).structuredContent;
+      if (out.fallback !== false || out.answers?.is_bug?.noul !== 0.9) {
+        fail(`typesafe 429 retry: unexpected result ${JSON.stringify(out)}`);
+      }
+      if (calls !== 2) fail(`typesafe 429 retry: expected 2 fetch calls, got ${calls}`);
+      ok("typesafe 429 retried once by SDK default policy");
+    }
+
+    // Edge case: every attempt rate-limited -> SDK exhausts default retries
+    // (2 retries after the initial call) and the judge returns the fallback
+    // envelope with actionable rate-limit text.
+    {
+      process.env.TYPESAFE_API_KEY = "limited";
       let calls = 0;
       globalThis.fetch = async () => {
         calls++;
@@ -294,36 +283,16 @@ async function runOfflineTypesafeTests() {
       if (out.fallback !== true || !/rate limited/i.test(out.error ?? "")) {
         fail(`typesafe all-429: expected rate-limit fallback, got ${JSON.stringify(out)}`);
       }
-      if (calls !== 2) {
-        fail(`typesafe all-429: expected exactly 2 calls (no SDK 429 retry), got ${calls}`);
+      if (calls !== 3) {
+        fail(`typesafe all-429: expected 3 calls (1 + 2 default retries), got ${calls}`);
       }
-      ok(`typesafe all keys rate-limited fallback (${out.error})`);
+      ok(`typesafe exhausted 429 retries fall back (${out.error})`);
     }
 
-    // Edge case: single key rate-limited with retryAfterMs -> one call,
-    // fallback text includes the retry hint and status.
+    // Edge case: non-retryable errors fail fast -- immediate generic fallback,
+    // exactly one fetch call.
     {
-      delete process.env.TYPESAFE_API_KEYS;
-      process.env.TYPESAFE_API_KEY = "solo";
-      let calls = 0;
-      globalThis.fetch = async () => {
-        calls++;
-        return new Response(JSON.stringify({ message: "slow down" }), {
-          status: 429,
-          headers: { "content-type": "application/json", "retry-after-ms": "250" },
-        });
-      };
-      const out = (await typesafeJudge({ ...judgeArgs })).structuredContent;
-      if (out.fallback !== true || !/retry after 250ms/.test(out.error ?? "") || !/HTTP 429/.test(out.error ?? "")) {
-        fail(`typesafe single-key 429: expected retry-after text, got ${JSON.stringify(out)}`);
-      }
-      if (calls !== 1) fail(`typesafe single-key 429: expected 1 call, got ${calls}`);
-      ok(`typesafe single-key 429 with retryAfterMs (${out.error})`);
-    }
-
-    // Edge case: non-429 errors are NOT rotated -- immediate generic fallback.
-    {
-      process.env.TYPESAFE_API_KEYS = "k1, k2";
+      process.env.TYPESAFE_API_KEY = "denied";
       let calls = 0;
       globalThis.fetch = async () => {
         calls++;
@@ -334,7 +303,7 @@ async function runOfflineTypesafeTests() {
         fail(`typesafe 401: expected generic fallback, got ${JSON.stringify(out)}`);
       }
       if (calls !== 1) fail(`typesafe 401: expected 1 call, got ${calls}`);
-      ok("typesafe non-429 error returns generic fallback without rotation");
+      ok("typesafe non-retryable error returns generic fallback without retry");
     }
 
     // Edge case: fallbackFrom mapping -- 429 yields rate-limit text;
@@ -353,22 +322,6 @@ async function runOfflineTypesafeTests() {
         fail(`fallbackFrom default: got ${defaultMsg.structuredContent.error}`);
       }
       ok("fallbackFrom 429 vs generic mapping");
-    }
-
-    // Edge case: key parsing normalizes empty/whitespace CSV segments and
-    // dedupes; TYPESAFE_API_KEY_2..9 fill in when the CSV var is unset.
-    {
-      if (parseKeys({ TYPESAFE_API_KEYS: " a , , b ,, a " }).join(",") !== "a,b") {
-        fail(`parseKeys CSV: got ${JSON.stringify(parseKeys({ TYPESAFE_API_KEYS: " a , , b ,, a " }))}`);
-      }
-      if (parseKeys({ TYPESAFE_API_KEY: " a ", TYPESAFE_API_KEY_3: " c ", TYPESAFE_API_KEY_2: "" }).join(",") !== "a,c") {
-        fail("parseKeys fallback vars: unexpected key list");
-      }
-      if (parseKeys({}).length !== 0) fail("parseKeys empty: expected no keys");
-      if (parseKeys({ TYPESAFE_API_KEYS: "   " }).length !== 0) {
-        fail("parseKeys whitespace CSV: expected no keys");
-      }
-      ok("parseKeys normalization and precedence");
     }
 
     // Happy path: no model override pins DEFAULT_MODEL (jev-1.14.0); a caller
@@ -392,145 +345,12 @@ async function runOfflineTypesafeTests() {
       if (!bodies[1].includes("jev-9.9.9")) fail(`model override: expected jev-9.9.9 in ${bodies[1]}`);
       ok("DEFAULT_MODEL pin with caller override honored");
     }
-
-    // Happy path: box question builds assets from the images map, sends the
-    // danger-zone header, and returns the typed box answer.
-    {
-      process.env.TYPESAFE_API_KEY = "box";
-      const PNG_BASE64 = Buffer.from("png-bytes-0").toString("base64");
-      const BOX_SUCCESS = {
-        answers: { locate: { type: "box", box: { top: 1, bottom: 2, left: 3, right: 4 }, confidence: 0.9 } },
-        model: DEFAULT_MODEL,
-        usage: { input_tokens: 1, output_tokens: 1 },
-      };
-      let captured;
-      globalThis.fetch = async (...args) => {
-        const req = args[0] instanceof Request ? args[0] : new Request(args[0], { ...args[1], duplex: "half" });
-        captured = { headers: req.headers, body: await req.text() };
-        return json(BOX_SUCCESS, 200);
-      };
-      const out = (
-        await typesafeJudge({
-          state: { page: "checkout" },
-          questions: { locate: { type: "box", instructions: "Locate the pay button in <ui>" } },
-          images: { ui: { data: PNG_BASE64 } },
-        })
-      ).structuredContent;
-      if (
-        out.fallback !== false ||
-        out.answers?.locate?.type !== "box" ||
-        out.answers.locate.box?.top !== 1
-      ) {
-        fail(`typesafe box happy path: unexpected result ${JSON.stringify(out)}`);
-      }
-      if (captured.headers.get("typesafe-danger-zone-images") !== "true") {
-        fail("typesafe box happy path: missing TypeSafe-Danger-Zone-Images header");
-      }
-      if (!captured.body.includes("png-bytes-0")) fail("typesafe box happy path: image bytes not sent as an asset");
-      if (!captured.body.includes("<ui>")) fail("typesafe box happy path: asset reference missing from request");
-      ok("typesafe box happy path (assets, header, typed answer)");
-    }
-
-    // Edge case: server schema guard -- a box question whose instructions
-    // reference no image name from the images map is rejected before any
-    // request is built.
-    {
-      let threw;
-      try {
-        validateImages(
-          { locate: { type: "box", instructions: "Locate the pay button in <missing>" } },
-          { ui: { data: "aGk=" } },
-        );
-      } catch (err) {
-        threw = err;
-      }
-      if (!threw || !/images map/.test(threw.message)) {
-        fail(`validateImages dangling reference: expected rejection, got ${String(threw)}`);
-      }
-      validateImages(
-        { locate: { type: "box", instructions: "Locate the pay button in <ui>" } },
-        { ui: { data: "aGk=" } },
-      );
-      // Edge case: an images entry no box question references is rejected
-      // (images are box-only input on every provider).
-      let unreferenced;
-      try {
-        validateImages(
-          { locate: { type: "box", instructions: "Locate the pay button in <ui>" } },
-          { ui: { data: "aGk=" }, extra: { data: "aGk=" } },
-        );
-      } catch (err) {
-        unreferenced = err;
-      }
-      if (!unreferenced || !/not referenced by any box question/.test(unreferenced.message)) {
-        fail(`validateImages unreferenced image: expected rejection, got ${String(unreferenced)}`);
-      }
-      ok("validateImages rejects dangling image reference and unreferenced image before any request");
-    }
   } finally {
     globalThis.fetch = savedFetch;
     for (const name of Object.keys(process.env)) {
-      if (name === "TYPESAFE_API_KEYS" || /^TYPESAFE_API_KEY(_\d+)?$/.test(name)) delete process.env[name];
+      if (/^TYPESAFE_API_KEY$/.test(name)) delete process.env[name];
     }
     for (const [name, value] of Object.entries(savedEnv)) process.env[name] = value;
-  }
-}
-
-// HTTP routing: GET /health returns 200 with provider/transport/keys; GET
-// /mcp stays 405; unknown paths stay 404.
-async function runHttpRoutingTest() {
-  const PORT = 18471;
-  const env = { ...process.env, JUDGE_TRANSPORT: "http", HTTP_HOST: "127.0.0.1", HTTP_PORT: String(PORT) };
-  delete env.TYPESAFE_API_KEYS;
-  delete env.TYPESAFE_API_KEY;
-  for (let i = 2; i <= 9; i++) delete env[`TYPESAFE_API_KEY_${i}`];
-  env.JUDGE_PROVIDER = "typesafe-api";
-  delete env.CLOUDFLARE_API_TOKEN;
-  delete env.CLOUDFLARE_ACCOUNT_ID;
-  const proc = spawn(process.execPath, ["server.mjs"], {
-    stdio: ["ignore", "ignore", "inherit"],
-    env,
-  });
-  const base = `http://127.0.0.1:${PORT}`;
-  const deadline = Date.now() + TIMEOUT_MS;
-  async function waitForServer() {
-    while (Date.now() < deadline) {
-      try {
-        const res = await fetch(`${base}/health`);
-        if (res.status === 200) return res;
-      } catch {}
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    return null;
-  }
-  async function run() {
-    const health = await waitForServer();
-    if (!health) {
-      proc.kill("SIGKILL");
-      fail("http routing: /health did not come up within timeout");
-    }
-    const payload = await health.json();
-    if (payload.provider !== "typesafe-api" || payload.transport !== "http" || payload.keys !== 0) {
-      fail(`http routing: unexpected /health payload ${JSON.stringify(payload)}`);
-    }
-    const mcpGet = await fetch(`${base}/mcp`, { method: "GET" });
-    if (mcpGet.status !== 405) fail(`http routing: GET /mcp expected 405, got ${mcpGet.status}`);
-    const unknown = await fetch(`${base}/nope`);
-    if (unknown.status !== 404) fail(`http routing: unknown path expected 404, got ${unknown.status}`);
-    const mcpPost = await fetch(`${base}/mcp`, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "t", version: "0" } } }),
-    });
-    if (mcpPost.status !== 200) fail(`http routing: POST /mcp expected 200, got ${mcpPost.status}`);
-    proc.kill("SIGKILL");
-    ok("http routing: /health 200, /mcp GET 405, unknown 404, /mcp POST intact");
-  }
-  try {
-    await run();
-  } catch (err) {
-    proc.kill("SIGKILL");
-    fail(`http routing: ${err.message}`);
   }
 }
 
@@ -582,9 +402,7 @@ function runStdioDefaultPathTest() {
   delete env.CLOUDFLARE_API_TOKEN;
   delete env.CLOUDFLARE_ACCOUNT_ID;
   delete env.JUDGE_PROVIDER;
-  delete env.TYPESAFE_API_KEYS;
   delete env.TYPESAFE_API_KEY;
-  for (let i = 2; i <= 9; i++) delete env[`TYPESAFE_API_KEY_${i}`];
   const proc = spawn(process.execPath, ["server.mjs"], {
     stdio: ["pipe", "pipe", "inherit"],
     env,
@@ -825,8 +643,6 @@ function runStdioDefaultPathTest() {
 await runOfflineCloudflareTests();
 
 await runOfflineTypesafeTests();
-
-await runHttpRoutingTest();
 
 await runStartupFailureCase(
   "missing CLOUDFLARE_API_TOKEN",
