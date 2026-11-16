@@ -68,20 +68,24 @@ export function fallbackFrom(err, defaultMessage) {
 // Criteria checks shared by both provider paths. Runs before any question
 // construction so malformed questions return the documented fallback error
 // (never an API request).
-export function validateQuestionSpec(spec) {
+export function validateQuestionSpec(spec, name) {
+  // Caller-visible hint prefix: names the offending question so a multi-question
+  // request can be fixed in one round-trip. Aggregates only -- never echoes
+  // spec content (instructions/criteria values) back to the caller.
+  const hint = name ? `questions.${name}: ` : "";
   if (spec.type === "choice") {
     if (!spec.criteria || Array.isArray(spec.criteria) || typeof spec.criteria !== "object") {
-      throw new Error(`choice question requires criteria as an object of {option: description}`);
+      throw new Error(`${hint}choice question requires "criteria" as an object of {option: description}; add criteria mapping each option name to a description`);
     }
   } else if (spec.type === "score") {
     if (!Array.isArray(spec.criteria) || spec.criteria.length < 2) {
-      throw new Error(`score question requires criteria as an ordered array of at least two level descriptions`);
+      throw new Error(`${hint}score question requires "criteria" as an ordered array of at least two level descriptions; add criteria like ["low", "high"]`);
     }
   }
 }
 
-function buildQuestion(spec) {
-  validateQuestionSpec(spec);
+function buildQuestion(spec, name) {
+  validateQuestionSpec(spec, name);
   if (spec.type === "choice") {
     return choice(spec.instructions, spec.criteria);
   }
@@ -98,7 +102,7 @@ export async function typesafeJudge({ state, questions, timeout_ms, model }, ctx
   let qmap;
   try {
     qmap = Object.fromEntries(
-      Object.entries(questions).map(([name, spec]) => [name, buildQuestion(spec)]),
+      Object.entries(questions).map(([name, spec]) => [name, buildQuestion(spec, name)]),
     );
   } catch (err) {
     return fallbackFrom(err, "question construction failed");
