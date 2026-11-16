@@ -3,6 +3,7 @@
 // startup env validation, and an MCP stdio handshake for the default typesafe
 // path. Exits 0 on success, non-zero on any failure or timeout. Does not
 // require TYPESAFE_API_KEY.
+import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import {
   CF_DEFAULT_MODEL,
@@ -405,6 +406,69 @@ async function runOfflineTypesafeTests() {
   }
 }
 
+// Issue #122: TYPESAFE_DEFAULT_MODEL must override the pinned default on the
+// typesafe path. DEFAULT_MODEL is read at module load, so spawn a subprocess
+// that sets the env before importing the provider, stubs fetch, and asserts
+// the request body model (the caller override still wins is covered
+// in-process above).
+function runEnvModelOverrideTest() {
+  return new Promise((resolve) => {
+    const script = [
+      "process.env.TYPESAFE_API_KEY = 'smoke';",
+      "process.env.TYPESAFE_DEFAULT_MODEL = 'jev-env-override';",
+      "const m = await import(new URL('./providers/typesafe-api.mjs', 'file://' + process.cwd() + '/'));",
+      "if (m.DEFAULT_MODEL !== 'jev-env-override') { console.error('DEFAULT_MODEL=' + m.DEFAULT_MODEL); process.exit(1); }",
+      "let body = '';",
+      "globalThis.fetch = async (url, init) => { body = init && typeof init.body === 'string' ? init.body : await new Request(url, { ...init, duplex: 'half' }).text(); return new Response(JSON.stringify({ answers: {}, model: 'x', usage: {} }), { status: 200, headers: { 'content-type': 'application/json' } }); };",
+      "const out = await m.typesafeJudge({ state: {}, questions: { q: { instructions: 'Is this a defect?' } } });",
+      "if (out.structuredContent.fallback !== false) { console.error('unexpected fallback: ' + JSON.stringify(out.structuredContent)); process.exit(1); }",
+      "if (!body.includes('jev-env-override')) { console.error('BODY=' + body); process.exit(1); }",
+      "console.log('OK');",
+    ].join("\n");
+    const child = spawn(
+      process.execPath,
+      ["--input-type=module", "-e", script],
+      { stdio: ["ignore", "pipe", "pipe"], cwd: new URL("..", import.meta.url).pathname },
+    );
+    let out = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (out += d));
+    const t = setTimeout(() => fail("env model override: subprocess timed out"), TIMEOUT_MS);
+    child.on("exit", (code) => {
+      clearTimeout(t);
+      if (code !== 0 || !out.includes("OK")) {
+        fail(`env model override: exit ${code}, output ${out.slice(0, 300)}`);
+      }
+      ok("TYPESAFE_DEFAULT_MODEL override honored (request body model = jev-env-override)");
+      resolve();
+    });
+    child.on("error", (err) => fail(`env model override: spawn failed: ${err.message}`));
+  });
+}
+
+// Issue #122: exactly one validateQuestionSpec call site (inside buildQuestion
+// in providers/typesafe-api.mjs); the judgeHandler loop in server.mjs is gone.
+function assertSingleValidationSite() {
+  const server = readFileSync(new URL("../server.mjs", import.meta.url), "utf8");
+  const provider = readFileSync(
+    new URL("../providers/typesafe-api.mjs", import.meta.url),
+    "utf8",
+  );
+  const serverCalls = (server.match(/validateQuestionSpec\(/g) ?? []).length;
+  if (serverCalls !== 0) {
+    fail(`validateQuestionSpec: expected 0 occurrences in server.mjs, got ${serverCalls}`);
+  }
+  const providerMatches = provider.match(/validateQuestionSpec\(/g) ?? [];
+  // One definition + exactly one call site.
+  if (providerMatches.length !== 2) {
+    fail(`validateQuestionSpec: expected definition + 1 call in typesafe-api.mjs, got ${providerMatches.length}`);
+  }
+  if (!/function validateQuestionSpec\(/.test(provider)) {
+    fail("validateQuestionSpec definition missing in typesafe-api.mjs");
+  }
+  ok("exactly one validateQuestionSpec call site");
+}
+
 // Startup-failure assertions: spawn node server.mjs with a controlled env and
 // require a non-zero exit with the offending variable named on stderr.
 function runStartupFailureCase(label, envOverrides, expectPattern) {
@@ -752,6 +816,78 @@ function runStdioDefaultPathTest() {
           stdioFail(`expected array-questions hint, got: ${text8}`);
         }
         ok(`array-questions hint: ${text8.slice(0, 200)}`);
+        // Issue #122: tools/list must succeed (no -32603) and stay under 3 KB.
+        send({ jsonrpc: "2.0", id: 9, method: "tools/list" });
+      } else if (msg.id === 9) {
+        clearTimeout(timer);
+        if (msg.error) {
+          stdioFail(`tools/list failed: ${JSON.stringify(msg.error).slice(0, 300)}`);
+        }
+        const toolsJson = JSON.stringify(msg.result);
+        const bytes = Buffer.byteLength(toolsJson);
+        if (!msg.result?.tools?.length) {
+          stdioFail(`tools/list returned no tools: ${toolsJson.slice(0, 200)}`);
+        }
+        if (bytes >= 3072) {
+          stdioFail(`tools/list payload too large: ${bytes} bytes (target < 3072)`);
+        }
+        ok(`tools/list ok (${bytes} bytes, under 3072)`);
+        send({
+          jsonrpc: "2.0",
+          id: 10,
+          method: "tools/call",
+          params: {
+            name: "judge",
+            arguments: {
+              state: {},
+              questions: {
+                rating: {
+                  type: "score",
+                  instructions: "rate it",
+                  criteria: Array.from({ length: 11 }, (_, i) => `level ${i + 1}`),
+                },
+              },
+            },
+          },
+        });
+      } else if (msg.id === 10) {
+        clearTimeout(timer);
+        const text10 = msg.result?.content?.[0]?.text;
+        if (!msg.result?.isError || !text10) {
+          stdioFail(`expected INVALID_PARAMS for 11 score levels, got: ${JSON.stringify(msg).slice(0, 300)}`);
+        }
+        if (!/at most 10 levels/.test(text10)) {
+          stdioFail(`expected 10-levels hint, got: ${text10}`);
+        }
+        ok(`score 11 levels rejected: ${text10.slice(0, 120)}`);
+        // Issue #122: API limits enforced in zod -- 256 choice options must be
+        // rejected at the schema layer.
+        const manyOptions = Object.fromEntries(
+          Array.from({ length: 256 }, (_, i) => [`option_${i}`, "description"]),
+        );        send({
+          jsonrpc: "2.0",
+          id: 11,
+          method: "tools/call",
+          params: {
+            name: "judge",
+            arguments: {
+              state: {},
+              questions: {
+                pick: { type: "choice", instructions: "pick one", criteria: manyOptions },
+              },
+            },
+          },
+        });
+      } else if (msg.id === 11) {
+        clearTimeout(timer);
+        const text11 = msg.result?.content?.[0]?.text;
+        if (!msg.result?.isError || !text11) {
+          stdioFail(`expected INVALID_PARAMS for 256 choice options, got: ${JSON.stringify(msg).slice(0, 300)}`);
+        }
+        if (!/at most 255 options/.test(text11)) {
+          stdioFail(`expected 255-options hint, got: ${text11}`);
+        }
+        ok(`choice 256 options rejected: ${text11.slice(0, 120)}`);
         proc.kill("SIGKILL");
         process.exit(0);
       }
@@ -781,6 +917,8 @@ function runStdioDefaultPathTest() {
 await runOfflineCloudflareTests();
 
 await runOfflineTypesafeTests();
+assertSingleValidationSite();
+await runEnvModelOverrideTest();
 await runStartupFailureCase(
   "missing CLOUDFLARE_API_TOKEN",
   { JUDGE_PROVIDER: "cloudflare-workers-ai" },

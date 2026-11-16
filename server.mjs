@@ -12,8 +12,9 @@
 // the in-flight request. Question specs are validated before any provider
 // call, and {state, questions} payloads exceeding 256 KiB are rejected, both
 // via the shared checks in providers/typesafe-api.mjs.
-// Retries, timeouts, and default model resolution (pinned to jev-1.14.0 on
-// the typesafe-api path) are owned by @typesafe-ai/sdk.
+// Retries, timeouts, and default model resolution (DEFAULT_MODEL on the
+// typesafe-api path, overridable via TYPESAFE_DEFAULT_MODEL) are owned by
+// @typesafe-ai/sdk.
 //
 // Auth: TYPESAFE_API_KEY (resolved from the environment by the SDK).
 //
@@ -31,7 +32,6 @@ import {
   fallbackEnvelope,
   fallbackFrom,
   typesafeJudge,
-  validateQuestionSpec,
 } from "./providers/typesafe-api.mjs";
 
 // Startup provider selection: JUDGE_PROVIDER is read exactly once, at server
@@ -89,13 +89,13 @@ const questionSpec = z
       .enum(["noul", "choice", "score"])
       .optional()
       .describe(
-        "Question primitive: noul = yes/no probability, choice = pick among options, score = rating on ordered levels.",
+        "noul = yes/no probability; choice = pick an option; score = ordered rating.",
       ),
     instructions: entryType
       .nullable()
       .optional()
       .describe(
-        "Narrow, self-contained question text. Predicate-positive: a yes must affirm the trait, never negate it. One trait per question; no double-barreled or degree-worded noul questions. A flat confidence distribution across many requests means the question is under-specified.",
+        "Narrow, self-contained, predicate-positive question text; one trait per question.",
       ),
     // noul: {true, false} descriptions (optional). choice: {option: description|null}.
     // score: [level descriptions] (>= 2).
@@ -110,11 +110,13 @@ const questionSpec = z
             z.null(),
           ]),
         ),
-        z.array(z.unknown()).min(2),
+        z
+          .array(z.unknown())
+          .min(2),
       ])
       .optional()
       .describe(
-        "Per-option definitions for choice (option name -> description) or ordered level descriptions for score (array, >= 2). Prefer structured levels of the shape {summary, signals[]} over free text. Optional for noul.",
+        "choice: {option: description|null}; score: ordered level descriptions (2-10); omit for noul.",
       ),
     },
     // Unknown keys (e.g. a "choice": true shorthand) must reject, not be
@@ -139,12 +141,36 @@ const questionSpec = z
         message: 'missing "type" (noul|choice|score)',
       });
     }
+    // API limit: choice questions accept at most 255 options.
+    if (
+      spec.type === "choice" &&
+      spec.criteria &&
+      !Array.isArray(spec.criteria) &&
+      Object.keys(spec.criteria).length > 255
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["criteria"],
+        message:
+          "choice criteria supports at most 255 options; reduce options or split into multiple choice questions",
+      });
+    }
+    // API limit: score questions accept at most 10 levels (kept out of the
+    // zod .max() so the union still parses and this hint names the limit).
+    if (Array.isArray(spec.criteria) && spec.criteria.length > 10) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["criteria"],
+        message:
+          "score criteria supports at most 10 levels; reduce levels or split into multiple score questions",
+      });
+    }
   });
 
 // Questions map with pre-parse fix hints: an array (or other non-map) reaches
 // the caller as a named hint rather than a bare zod "expected object" error.
 const questionsSchema = z
-  .union([z.record(z.string().min(1), questionSpec), z.array(z.unknown()), z.null(), z.undefined()])
+  .union([z.record(z.string().min(1), questionSpec), z.array(z.unknown()), z.null()])
   .superRefine((qs, ctx) => {
     if (Array.isArray(qs)) {
       ctx.addIssue({
@@ -165,10 +191,10 @@ const inputSchema = z.object({
   state: z
     .union([z.record(z.string(), z.unknown()), z.array(z.unknown()), z.string()])
     .describe(
-      "Everything the questions need to be answered. Questions judge only what state contains, so include all relevant application state here.",
+      "Application state the questions judge.",
     ),
   questions: questionsSchema.describe(
-    'Map of question name to question spec. Ask many narrow, atomic questions in one request: questions run in parallel in a single fast call, which is far cheaper and faster than one call per question. Ignore answers to questions you do not need. Example: {is_bug: {type: "noul", instructions: "Is this a defect?"}, severity: {type: "score", instructions: "How severe is the defect?", criteria: ["low", "high"]}}.',
+    'Map of name to question spec (type: noul|choice|score). Example: {is_bug: {type: "noul", instructions: "Is this a defect?"}}.',
   ),
   timeout_ms: z
     .number()
@@ -176,13 +202,13 @@ const inputSchema = z.object({
     .positive()
     .max(60000)
     .optional()
-    .describe("Optional per-request timeout cap in milliseconds; maximum 60000."),
+    .describe("Optional per-request timeout cap in ms (max 60000)."),
   model: z
     .string()
     .min(1)
     .optional()
     .describe(
-      "Optional model override. Pin a specific model id (e.g. jev-1.14.0) rather than jev-latest when answers feed calibration or repeatable decisions.",
+      "Optional model override.",
     ),
 });
 
@@ -191,9 +217,9 @@ const outputSchema = z.object({
     .record(z.string(), z.unknown())
     .optional()
     .describe(
-      "Map of question name to typed answer: noul answers carry yes/no with a probability, choice answers name the selected option, score answers give the chosen level.",
+      'Map of name to typed answer: noul -> {type: "noul", noul: number}; choice -> winning option name; score -> {type: "score", score, confidence, legend, probabilities}.',
     ),
-  model: z.string().optional().describe("Model id that produced the answers."),
+  model: z.string().optional().describe("Producing model id."),
   usage: z
     .record(z.string(), z.unknown())
     .optional()
@@ -201,9 +227,9 @@ const outputSchema = z.object({
   fallback: z
     .boolean()
     .describe(
-      "True when the judge failed and no answers are available; the request never blocks or throws.",
+      "True when the judge failed; the request never blocks.",
     ),
-  error: z.string().optional().describe("Failure reason; present only when fallback is true."),
+  error: z.string().optional().describe("Present only when fallback is true."),
 });
 
 const { name, version } = createRequire(import.meta.url)("./package.json");
@@ -236,15 +262,10 @@ const MAX_PAYLOAD_BYTES = 262144;
 async function judgeHandler({ state, questions, timeout_ms, model }, ctx) {
   const cleanState = stripProtoKeys(state);
   const cleanQuestions = stripProtoKeys(questions);
-  try {
-    for (const [name, spec] of Object.entries(cleanQuestions)) {
-      validateQuestionSpec(spec, name);
-    }
-  } catch (err) {
-    return fallbackEnvelope(
-      err && err.message ? err.message : "question construction failed",
-    );
-  }
+  // Question specs are validated exactly once, inside typesafeJudge via
+  // buildQuestion (providers/typesafe-api.mjs); per-spec hints flow through
+  // fallbackFrom into the envelope. Schema-layer fix hints (missing type,
+  // unknown keys, array questions, cardinality limits) fire in zod above.
   // Serialize once and measure UTF-8 bytes (Buffer.byteLength), not UTF-16
   // code units, so non-ASCII payloads cannot slip past the cap.
   const serialized = JSON.stringify({ state: cleanState, questions: cleanQuestions });
@@ -277,14 +298,14 @@ function buildServer() {
     { name, version },
     {
       instructions:
-        "MCP server exposing a single 'judge' tool that sends application state plus typed questions (noul yes/no probability, choice among options, score on ordered levels) to the TypeSafe System One model and returns structured answers with model/usage metadata. Default model is pinned to jev-1.14.0 on the typesafe-api path. All questions are answered in one request; failures return a {fallback: true, error} envelope instead of blocking.",
+        "Single 'judge' tool: sends application state plus typed questions (noul/choice/score) to the TypeSafe System One model in one request. See the judge tool description for the full contract and question example.",
     },
   );
   server.registerTool(
     "judge",
     {
       description:
-        "Ask the TypeSafe System One model (Jev) typed questions (noul yes/no probability, choice among options, score on ordered levels) about JSON application state. Default model is pinned to jev-1.14.0 on the typesafe-api path. All questions are answered in one fast request. Returns {answers, model, usage} on success or {fallback: true, error} on any failure.",
+        "Ask the TypeSafe System One model (Jev) typed questions (noul/choice/score) about JSON application state; all questions are answered in one fast request. Default model: DEFAULT_MODEL (jev-1.14.0), overridable via TYPESAFE_DEFAULT_MODEL or the model input. Returns {answers, model, usage} or {fallback: true, error}.",
       inputSchema,
       outputSchema,
       annotations: {
