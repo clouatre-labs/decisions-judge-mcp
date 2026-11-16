@@ -45,55 +45,55 @@ Verdicts:
 
 Most common mistakes: missing `type`, a single flat question instead of a named map, `choice`/`choices` instead of `criteria`. Validation errors do not say how to fix the spec. Judge: `error_hints` is the top lever at 0.96 versus removals 0.01 and spec upgrade 0.03.
 
-**Action** (#110): return field-level fix hints in validation errors (e.g. `questions.foo: missing "type" (noul|choice|score)`); add one minimal example to the `questions` description.
+**Action** (#120): return field-level fix hints in validation errors (e.g. `questions.foo: missing "type" (noul|choice|score)`); add one minimal example to the `questions` description.
 
 ### 2. JSON-string state is forwarded escaped (PARTIAL, med)
 
 `server.mjs:16` accepts string state and forwards it unchanged. Answer-quality impact is unmeasured.
 
-**Action** (#111): if a string state parses to an object or array, parse before forwarding. Measure the answer delta on a small replay set first.
+**Action** (#120): if a string state parses to an object or array, parse before forwarding. Measure the answer delta on a small replay set first.
 
 ### 3. box/images is unreleased, unused, beta, and buggy (CONFIRMED, med)
 
 `box` is on main (`server.mjs`) but absent from the v1.6.1 tag. Zero calls use it. Images still require `TypeSafe-Danger-Zone-Images`; Cloudflare labels images and box beta; noul-on-image failed 6/10 (2026-10-23 audit). The asset map at `providers/typesafe-api.mjs:190` is keyed by the bare name (`img`) rather than the delimited reference (`<img>`); the API matches references as literal text (SDK `index.d.mts:198`, docs.typesafe.ai/images.md), so a live call with "img" in state injected the image 4 times (1,268 vs 536 input tokens) and degraded the box. Judge: remove 0.95, fix-and-ship 0.05.
 
-**Action** (#112): revert box/images from main before the next release; keep `scripts/probe-images.mjs` and #98 to re-add once images leave beta. If kept instead, key assets as `` `<${name}>` ``.
+**Action** (#119): revert box/images from main before the next release; keep `scripts/probe-images.mjs` and #98 to re-add once images leave beta. If kept instead, key assets as `` `<${name}>` ``.
 
 ### 4. HTTP transport lacks the spec-required Origin check (CONFIRMED, high)
 
 MCP 2026-07-28 Streamable HTTP requires servers to validate `Origin` (DNS rebinding). A POST with `Origin: http://evil.example` returned 200 (`server.mjs:308-446`). No client config (Claude Code, goose, pi) uses HTTP. Judge: remove 0.74, fix 0.26.
 
-**Action** (#113): remove the HTTP transport, `scripts/smoke-http.mjs`, the routing test in `smoke-judge.mjs`, and the README section (about 540 lines). If kept, call the SDK's exported origin and host validation helpers before `handler.fetch`.
+**Action** (#119): remove the HTTP transport, `scripts/smoke-http.mjs`, the routing test in `smoke-judge.mjs`, and the README section (about 540 lines). If kept, call the SDK's exported origin and host validation helpers before `handler.fetch`.
 
 ### 5. Key rotation removes rate-limit retry for single-key users (CONFIRMED, med)
 
 `providers/typesafe-api.mjs:56` sets `httpStatuses: [408, 500, 502, 503, 504]` and `respectRetryAfter: false`, so 429 and 529 get one attempt (SDK default: 408, 429, 500-599 with backoff). TypeSafe rate limits are per organization, so rotating keys within one organization does not help. All observed configs use one key. The `server.mjs:28` comment calling `TYPESAFE_API_KEY_2..9` "SDK standard" is wrong. Judge: remove 0.78.
 
-**Action** (#114): drop `parseKeys`, the client cache, and rotation (about 120 lines); one `TypeSafeClient({ logLevel: "off" })` with SDK default retry.
+**Action** (#119): drop `parseKeys`, the client cache, and rotation (about 120 lines); one `TypeSafeClient({ logLevel: "off" })` with SDK default retry.
 
 ### 6. stdio does not negotiate MCP 2026-07-28 (CONFIRMED, high)
 
 `server/discover` returns "Method not found" on stdio (`server.mjs:446-450`); the installed SDK's `serveStdio(factory)` handles it and keeps older clients working.
 
-**Action** (#115): replace the manual `StdioServerTransport` wiring with `serveStdio(() => buildServer())`; add one smoke check for `server/discover`.
+**Action** (#121): replace the manual `StdioServerTransport` wiring with `serveStdio(() => buildServer())`; add one smoke check for `server/discover`.
 
 ### 7. `timeout_ms` is per attempt, not per request (CONFIRMED, med)
 
 Described as a per-request cap (`server.mjs:166`) but passed as the SDK per-attempt timeout (`index.d.mts:231`: no total budget). Probe: `timeout_ms=200` took 1,900 ms over 3 attempts; 60,000 can reach about 181 s.
 
-**Action** (#115): pass `signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(timeout_ms)])`.
+**Action** (#121): pass `signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(timeout_ms)])`.
 
 ### 8. Failures never set `isError` (CONFIRMED, med)
 
 The spec expects tool execution errors to set `isError: true`; the fallback envelope never does (`providers/typesafe-api.mjs:70-95`).
 
-**Action** (#115): set `isError: true` in the fallback envelope, keeping the `{fallback, error}` payload.
+**Action** (#121): set `isError: true` in the fallback envelope, keeping the `{fallback, error}` payload.
 
 ### 9. Cloudflare provider is unused and drifted (PARTIAL, low, owner decision)
 
 `providers/cloudflare-workers-ai.mjs:104` defaults to `typesafe/jev`, which resolved to jev-1.13.0 live; `typesafe/jev-1.14.0` exists. A bare `jev-1.14.0` override fails there ("No such model"). Pricing $0.042 per million input tokens, 32k context (64k direct). Cloudflare also lists its own Jev-compatible Clef models (not evaluated). Judge was split: remove 0.52, keep-and-pin 0.46, auto-failover 0.02.
 
-**Action** (#117): owner decision. Recommended: keep and pin `typesafe/jev-1.14.0`, prefix bare `jev-*` overrides with `typesafe/`. Do not build failover.
+**Action** (#121): owner decision. Recommended: keep and pin `typesafe/jev-1.14.0`, prefix bare `jev-*` overrides with `typesafe/`. Do not build failover.
 
 ### 10. Regressions and drift (CONFIRMED, low)
 
@@ -103,7 +103,7 @@ The spec expects tool execution errors to set `isError: true`; the fallback enve
 - `tools/list` is 4,506 B (about 1,127 tokens per session); the 510 B server instructions repeat the tool description.
 - Local `node_modules` has MCP server 2.3.1 while the lockfile pins 2.4.0; run `npm ci`.
 
-**Action** (#116): one cleanup PR after findings 3-5 land; trim descriptions once box is gone.
+**Action** (#122): one cleanup PR after findings 3-5 land; trim descriptions once box is gone.
 
 ### 11. Model and performance status (REFUTED as gaps)
 
@@ -136,10 +136,10 @@ The classify log is valid JSON (2 field violations in 378 lines) but has no time
 
 ## Recommended Order
 
-1. **Subtract** (one PR each): revert box/images (#112), remove HTTP (#113), remove rotation (#114). Net about 800 fewer lines; resolves the Origin and retry findings by deletion.
-2. **Caller ergonomics**: fix hints (#110), then string-state parsing behind a measured replay (#111).
-3. **Spec and correctness**: `serveStdio`, total timeout, `isError` (#115), cleanup (#116).
-4. **Release v1.7.0**, then decide Cloudflare (#117) and fix coder logging (12).
+1. **Subtract** (one PR each): revert box/images (#119), remove HTTP (#119), remove rotation (#119). Net about 800 fewer lines; resolves the Origin and retry findings by deletion.
+2. **Caller ergonomics**: fix hints (#120), then string-state parsing behind a measured replay (#120).
+3. **Spec and correctness**: `serveStdio`, total timeout, `isError` (#121), cleanup (#122).
+4. **Release v1.7.0**, then decide Cloudflare (#121) and fix coder logging (12).
 
 Not recommended: image-backed noul/choice/score (still beta, failed probe), Cloudflare failover, long-context header (p95 state is 2.3 KB), a second model pin.
 
