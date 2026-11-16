@@ -12,9 +12,9 @@
 // the in-flight request. Question specs are validated before any provider
 // call, and {state, questions} payloads exceeding 256 KiB are rejected, both
 // via the shared checks in providers/typesafe-api.mjs.
-// Retries, timeouts, and default model resolution (DEFAULT_MODEL on the
-// typesafe-api path, overridable via TYPESAFE_DEFAULT_MODEL) are owned by
-// @typesafe-ai/sdk.
+// Retries and timeouts are owned by @typesafe-ai/sdk; default model
+// resolution lives in providers/typesafe-api.mjs (DEFAULT_MODEL pin,
+// overridable via TYPESAFE_DEFAULT_MODEL, read once at module load).
 //
 // Auth: TYPESAFE_API_KEY (resolved from the environment by the SDK).
 //

@@ -369,11 +369,17 @@ async function runOfflineTypesafeTests() {
       if (generic.structuredContent.error !== "boom (HTTP 500)") {
         fail(`fallbackFrom generic: got ${generic.structuredContent.error}`);
       }
+      // 529 arrives as a generic error with .status (not RateLimitError), so
+      // the status checks in isRateLimit are load-bearing -- pin that here.
+      const saturated = fallbackFrom({ status: 529, message: "ignored" }, "d");
+      if (saturated.structuredContent.error !== "rate limited - retry shortly (HTTP 529)") {
+        fail(`fallbackFrom 529: got ${saturated.structuredContent.error}`);
+      }
       const defaultMsg = fallbackFrom({}, "typesafe request failed");
       if (defaultMsg.structuredContent.error !== "typesafe request failed") {
         fail(`fallbackFrom default: got ${defaultMsg.structuredContent.error}`);
       }
-      ok("fallbackFrom 429 vs generic mapping");
+      ok("fallbackFrom 429/529 vs generic mapping");
     }
 
     // Happy path: no model override pins DEFAULT_MODEL (jev-1.14.0); a caller
