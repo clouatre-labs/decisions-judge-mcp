@@ -465,7 +465,7 @@ function runStdioDefaultPathTest() {
         if (payload.fallback !== true) {
           stdioFail(`expected fallback === true, got: ${text.slice(0, 200)}`);
         }
-        if (!payload.error || !/criteria/i.test(payload.error)) {
+        if (!payload.error || !/criteria/i.test(payload.error) || !/questions\.q:/.test(payload.error)) {
           stdioFail(`expected criteria error, got: ${text.slice(0, 200)}`);
         }
         ok(`default path fallback envelope: ${payload.error}`);
@@ -537,7 +537,7 @@ function runStdioDefaultPathTest() {
         if (!msg.result?.isError || !text4) {
           stdioFail(`expected INVALID_PARAMS for omitted type, got: ${JSON.stringify(msg).slice(0, 300)}`);
         }
-        if (!/\btype\b/i.test(text4)) {
+        if (!/missing "type" \(noul\|choice\|score\)/.test(text4) || !/questions\.q/.test(text4)) {
           stdioFail(`expected error naming "type", got: ${text4}`);
         }
         ok(`omitted type rejected: ${text4.slice(0, 120)}`);
@@ -549,7 +549,8 @@ function runStdioDefaultPathTest() {
           params: {
             name: "judge",
             arguments: {
-              state: {},
+              // Secret state value: the hint must never echo caller content.
+              state: { secret: "hunter2" },
               questions: {
                 q: { choice: true, criteria: { confirm: "yes", demote: "no" } },
               },
@@ -562,10 +563,13 @@ function runStdioDefaultPathTest() {
         if (!msg.result?.isError || !text5) {
           stdioFail(`expected INVALID_PARAMS for unknown key, got: ${JSON.stringify(msg).slice(0, 300)}`);
         }
-        if (!/Unrecognized key/i.test(text5) || !/"choice"/.test(text5)) {
-          stdioFail(`expected error naming unknown key "choice", got: ${text5}`);
+        if (!/use "criteria", not "choice"/.test(text5) || !/questions\.q/.test(text5)) {
+          stdioFail(`expected choices-vs-criteria hint, got: ${text5}`);
         }
-        ok(`unknown key rejected: ${text5.slice(0, 200)}`);
+        if (text5.includes("hunter2")) {
+          stdioFail(`hint leaked state content: ${text5}`);
+        }
+        ok(`choices-vs-criteria hint: ${text5.slice(0, 200)}`);
         // Explicitly-typed choice and score questions must still parse.
         send({
           jsonrpc: "2.0",
@@ -614,6 +618,30 @@ function runStdioDefaultPathTest() {
           stdioFail(`valid score rejected by schema: ${JSON.stringify(msg).slice(0, 300)}`);
         }
         ok("explicitly-typed choice and score questions accepted");
+        // Issue #120: array-shaped questions rejected with a fix hint naming
+        // the expected map shape.
+        send({
+          jsonrpc: "2.0",
+          id: 8,
+          method: "tools/call",
+          params: {
+            name: "judge",
+            arguments: {
+              state: {},
+              questions: [{ type: "noul", instructions: "flat question" }],
+            },
+          },
+        });
+      } else if (msg.id === 8) {
+        clearTimeout(timer);
+        const text8 = msg.result?.content?.[0]?.text;
+        if (!msg.result?.isError || !text8) {
+          stdioFail(`expected INVALID_PARAMS for array questions, got: ${JSON.stringify(msg).slice(0, 300)}`);
+        }
+        if (!/expected a map of named question specs, got an array/.test(text8)) {
+          stdioFail(`expected array-questions hint, got: ${text8}`);
+        }
+        ok(`array-questions hint: ${text8.slice(0, 200)}`);
         proc.kill("SIGKILL");
         process.exit(0);
       }

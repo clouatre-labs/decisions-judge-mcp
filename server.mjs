@@ -81,9 +81,13 @@ const entryType = z.union([
 // Field descriptions follow TypeSafe question-design guidance so calling
 // models learn question construction from the schema itself.
 const questionSpec = z
-  .object({
+  .strictObject(
+    {
+    // type is schema-optional; the superRefine below rejects a missing type
+    // with a caller-visible fix hint instead of a bare zod "required" error.
     type: z
       .enum(["noul", "choice", "score"])
+      .optional()
       .describe(
         "Question primitive: noul = yes/no probability, choice = pick among options, score = rating on ordered levels.",
       ),
@@ -112,8 +116,50 @@ const questionSpec = z
       .describe(
         "Per-option definitions for choice (option name -> description) or ordered level descriptions for score (array, >= 2). Prefer structured levels of the shape {summary, signals[]} over free text. Optional for noul.",
       ),
-  })
-  .strict(); // unknown keys (e.g. a "choice": true shorthand) must reject, not be stripped
+    },
+    // Unknown keys (e.g. a "choice": true shorthand) must reject, not be
+    // stripped -- with a caller-visible fix hint naming the offending field.
+    {
+      error: (iss) => {
+        const key = iss.keys?.[0] ?? iss.path?.at(-1);
+        if (key === "choice" || key === "choices") {
+          return `use "criteria", not "${key}"`;
+        }
+        return `unrecognized field "${key}"; use "type", "instructions", "criteria"`;
+      },
+    },
+  )
+  .superRefine((spec, ctx) => {
+    // Zod-strict-layer fix hint for a missing type: names the expected shape
+    // and fix instead of a bare "required" error.
+    if (spec.type === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["type"],
+        message: 'missing "type" (noul|choice|score)',
+      });
+    }
+  });
+
+// Questions map with pre-parse fix hints: an array (or other non-map) reaches
+// the caller as a named hint rather than a bare zod "expected object" error.
+const questionsSchema = z
+  .union([z.record(z.string().min(1), questionSpec), z.array(z.unknown()), z.null(), z.undefined()])
+  .superRefine((qs, ctx) => {
+    if (Array.isArray(qs)) {
+      ctx.addIssue({
+        code: "custom",
+        message: 'expected a map of named question specs, got an array; use {name: {type: "noul", instructions: "..."}}',
+      });
+      return;
+    }
+    if (qs === null || qs === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: 'expected a map of named question specs; use {name: {type: "noul", instructions: "..."}}',
+      });
+    }
+  });
 
 const inputSchema = z.object({
   state: z
@@ -121,11 +167,9 @@ const inputSchema = z.object({
     .describe(
       "Everything the questions need to be answered. Questions judge only what state contains, so include all relevant application state here.",
     ),
-  questions: z
-    .record(z.string().min(1), questionSpec)
-    .describe(
-      "Map of question name to question spec. Ask many narrow, atomic questions in one request: questions run in parallel in a single fast call, which is far cheaper and faster than one call per question. Ignore answers to questions you do not need.",
-    ),
+  questions: questionsSchema.describe(
+    'Map of question name to question spec. Ask many narrow, atomic questions in one request: questions run in parallel in a single fast call, which is far cheaper and faster than one call per question. Ignore answers to questions you do not need. Example: {is_bug: {type: "noul", instructions: "Is this a defect?"}, severity: {type: "score", instructions: "How severe is the defect?", criteria: ["low", "high"]}}.',
+  ),
   timeout_ms: z
     .number()
     .int()
@@ -182,13 +226,20 @@ function stripProtoKeys(value) {
 // Payload size cap: {state, questions} serialized must stay within 256 KiB.
 const MAX_PAYLOAD_BYTES = 262144;
 
+// String-state parsing (issue #120): replay-measured 2026-11-16 across noul
+// and score calls; answer deltas parsed-vs-unparsed were not material, so the
+// parsing is intentionally NOT shipped. JSON-encoded string state is forwarded
+// verbatim. See the measurement recorded on issue #120.
+
 // Provider dispatch: sanitize inputs, enforce the payload cap, then hand off.
 // Every error lands in the fallback envelope.
 async function judgeHandler({ state, questions, timeout_ms, model }, ctx) {
   const cleanState = stripProtoKeys(state);
   const cleanQuestions = stripProtoKeys(questions);
   try {
-    for (const spec of Object.values(cleanQuestions)) validateQuestionSpec(spec);
+    for (const [name, spec] of Object.entries(cleanQuestions)) {
+      validateQuestionSpec(spec, name);
+    }
   } catch (err) {
     return fallbackEnvelope(
       err && err.message ? err.message : "question construction failed",
