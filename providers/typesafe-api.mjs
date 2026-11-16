@@ -46,7 +46,9 @@ export function envelope(payload) {
 }
 
 export function fallbackEnvelope(error) {
-  return envelope({ fallback: true, error });
+  // MCP spec: tool execution errors are reported inside the CallToolResult
+  // with isError:true, not as protocol-level JSON-RPC errors.
+  return { ...envelope({ fallback: true, error }), isError: true };
 }
 
 // Build a fallback envelope from a thrown value: prefer err.message, else the
@@ -109,8 +111,13 @@ export async function typesafeJudge({ state, questions, timeout_ms, model }, ctx
   }
   const request = { state, questions: qmap, model: model ?? DEFAULT_MODEL };
   const options = {};
-  if (timeout_ms) options.timeout = timeout_ms;
-  if (ctx?.signal) options.signal = ctx.signal;
+  // timeout_ms caps the WHOLE request (SDK retries included), not each
+  // retry attempt: compose it with any caller signal via AbortSignal.any.
+  const signals = [
+    ctx?.signal,
+    timeout_ms ? AbortSignal.timeout(timeout_ms) : undefined,
+  ].filter(Boolean);
+  if (signals.length > 0) options.signal = AbortSignal.any(signals);
   try {
     const result = await getClient().systemOne(
       request,

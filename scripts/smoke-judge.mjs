@@ -4,7 +4,11 @@
 // path. Exits 0 on success, non-zero on any failure or timeout. Does not
 // require TYPESAFE_API_KEY.
 import { spawn } from "node:child_process";
-import { cloudflareJudge } from "../providers/cloudflare-workers-ai.mjs";
+import {
+  CF_DEFAULT_MODEL,
+  cloudflareJudge,
+  normalizeCfModel,
+} from "../providers/cloudflare-workers-ai.mjs";
 import {
   DEFAULT_MODEL,
   fallbackFrom,
@@ -65,8 +69,10 @@ async function runOfflineCloudflareTests() {
     // Happy path: well-formed Completed envelope -> success mapping.
     {
       let calls = 0;
-      globalThis.fetch = async () => {
+      let lastBody = null;
+      globalThis.fetch = async (_url, init) => {
         calls++;
+        lastBody = JSON.parse(init?.body ?? "{}");
         return fakeResponse({ body: COMPLETED_BODY });
       };
       const out = await cloudflareJudge({ ...judgeArgs });
@@ -80,6 +86,22 @@ async function runOfflineCloudflareTests() {
       }
       if (calls !== 1) fail(`cloudflare happy path: expected 1 fetch call, got ${calls}`);
       ok("cloudflare happy path");
+
+      // Issue #121: default model pinned to typesafe/jev-1.14.0 and bare
+      // jev-* overrides prefixed with typesafe/.
+      if (lastBody?.model !== CF_DEFAULT_MODEL || CF_DEFAULT_MODEL !== "typesafe/jev-1.14.0") {
+        fail(`cloudflare model pin: request body model ${lastBody?.model}, CF_DEFAULT_MODEL ${CF_DEFAULT_MODEL}`);
+      }
+      const pinCases = [
+        [undefined, "typesafe/jev-1.14.0"],
+        ["jev-1.14.0", "typesafe/jev-1.14.0"],
+        ["typesafe/jev-1.13.0", "typesafe/jev-1.13.0"],
+      ];
+      for (const [input, want] of pinCases) {
+        const got = normalizeCfModel(input);
+        if (got !== want) fail(`cloudflare model pin: normalizeCfModel(${input}) = ${got}, want ${want}`);
+      }
+      ok(`cloudflare model pin (${CF_DEFAULT_MODEL}, bare jev-* prefixed)`);
     }
 
     // Happy path: only 429 and transport errors are retried; 4xx fail fast.
@@ -271,7 +293,8 @@ async function runOfflineTypesafeTests() {
 
     // Edge case: every attempt rate-limited -> SDK exhausts default retries
     // (2 retries after the initial call) and the judge returns the fallback
-    // envelope with actionable rate-limit text.
+    // envelope with actionable rate-limit text. Issue #121: the fallback
+    // envelope carries isError:true per the MCP tool-execution-error rule.
     {
       process.env.TYPESAFE_API_KEY = "limited";
       let calls = 0;
@@ -279,14 +302,42 @@ async function runOfflineTypesafeTests() {
         calls++;
         return json({ message: "slow down" }, 429);
       };
-      const out = (await typesafeJudge({ ...judgeArgs })).structuredContent;
-      if (out.fallback !== true || !/rate limited/i.test(out.error ?? "")) {
-        fail(`typesafe all-429: expected rate-limit fallback, got ${JSON.stringify(out)}`);
+      const result = await typesafeJudge({ ...judgeArgs });
+      const out = result.structuredContent;
+      if (result.isError !== true || out.fallback !== true || !/rate limited/i.test(out.error ?? "")) {
+        fail(`typesafe all-429: expected isError fallback, got isError=${result.isError} ${JSON.stringify(out)}`);
       }
       if (calls !== 3) {
         fail(`typesafe all-429: expected 3 calls (1 + 2 default retries), got ${calls}`);
       }
-      ok(`typesafe exhausted 429 retries fall back (${out.error})`);
+      ok(`typesafe exhausted 429 retries fall back with isError:true (${out.error})`);
+    }
+
+    // Edge case (issue #121): timeout_ms caps the WHOLE request (SDK retries
+    // included) via AbortSignal.any -- a hung stub call returns the fallback
+    // envelope well within the cap.
+    {
+      process.env.TYPESAFE_API_KEY = "hung";
+      // Stub fetch must honor the abort signal like undici does, otherwise
+      // the whole-request cap cannot interrupt it.
+      globalThis.fetch = (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal.reason ?? new Error("aborted")),
+            { once: true },
+          );
+        });
+      const started = Date.now();
+      const result = await typesafeJudge({ ...judgeArgs, timeout_ms: 150 });
+      const elapsed = Date.now() - started;
+      if (result.isError !== true || result.structuredContent?.fallback !== true) {
+        fail(`typesafe timeout cap: expected fallback envelope, got ${JSON.stringify(result)}`);
+      }
+      if (elapsed >= 2000) {
+        fail(`typesafe timeout cap: elapsed ${elapsed}ms for timeout_ms=150 -- cap not whole-request`);
+      }
+      ok(`typesafe timeout_ms caps whole request (fallback after ${elapsed}ms)`);
     }
 
     // Edge case: non-retryable errors fail fast -- immediate generic fallback,
@@ -392,6 +443,65 @@ function runStartupFailureCase(label, envOverrides, expectPattern) {
       ok(`${label} (exit ${code}: ${stderr.trim().split("\n")[0]})`);
       resolve();
     });
+  });
+}
+
+// Issue #121: with serveStdio, a client whose opening message carries a valid
+// 2026-07-28 per-request envelope gets pinned to the modern era, where the
+// modern-only server/discover handler is answered.
+function runStdioDiscoverTest() {
+  const env = { ...process.env };
+  delete env.JUDGE_PROVIDER;
+  delete env.TYPESAFE_API_KEY;
+  const proc = spawn(process.execPath, ["server.mjs"], {
+    stdio: ["pipe", "pipe", "inherit"],
+    env,
+  });
+  function stdioFail(msg) {
+    console.error(`smoke-judge: FAIL: ${msg}`);
+    proc.kill("SIGKILL");
+    process.exit(1);
+  }
+  function send(msg) {
+    proc.stdin.write(JSON.stringify(msg) + "\n");
+  }
+  let buffer = "";
+  proc.stdout.on("data", (chunk) => {
+    buffer += chunk;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let msg;
+      try {
+        msg = JSON.parse(line);
+      } catch {
+        stdioFail(`non-JSON output on stdout: ${line.slice(0, 200)}`);
+      }
+      if (msg.id === 1) {
+        if (msg.error || typeof msg.result !== "object") {
+          stdioFail(`server/discover failed: ${JSON.stringify(msg).slice(0, 300)}`);
+        }
+        ok(`server/discover served on modern era (${JSON.stringify(msg.result).slice(0, 160)})`);
+        proc.kill("SIGKILL");
+      }
+    }
+  });
+  const timer = setTimeout(() => stdioFail("server/discover test timed out"), TIMEOUT_MS);
+  proc.on("exit", () => clearTimeout(timer));
+  proc.on("error", (err) => stdioFail(`failed to spawn server: ${err.message}`));
+  send({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "server/discover",
+    params: {
+      // 2026-07-28 per-request envelope: the opening message's valid modern
+      // envelope claim is what pins the connection to the modern era.
+      _meta: {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+      },
+    },
   });
 }
 
@@ -671,7 +781,6 @@ function runStdioDefaultPathTest() {
 await runOfflineCloudflareTests();
 
 await runOfflineTypesafeTests();
-
 await runStartupFailureCase(
   "missing CLOUDFLARE_API_TOKEN",
   { JUDGE_PROVIDER: "cloudflare-workers-ai" },
@@ -694,4 +803,5 @@ await runStartupFailureCase(
   /JUDGE_PROVIDER must be one of: typesafe-api, cloudflare-workers-ai/,
 );
 
-runStdioDefaultPathTest();
+runStdioDiscoverTest();
+setTimeout(() => runStdioDefaultPathTest(), 500);
