@@ -226,30 +226,15 @@ function stripProtoKeys(value) {
 // Payload size cap: {state, questions} serialized must stay within 256 KiB.
 const MAX_PAYLOAD_BYTES = 262144;
 
-// String-state parsing (issue #120, measure-first): JSON-encoded string state
-// is parsed to an object/array before dispatch. GATED OFF pending replay
-// measurement of the answer delta -- flip to true to ship in one line.
-const ENABLE_STRING_STATE_PARSE = false;
-
-// Parse a JSON-encoded string into an object or array; non-JSON strings (and
-// JSON primitives like "42") pass through unchanged.
-function parseStringState(value) {
-  if (typeof value !== "string") return value;
-  try {
-    const parsed = JSON.parse(value);
-    if (parsed !== null && typeof parsed === "object") return parsed;
-  } catch {
-    // non-JSON string: pass through unchanged
-  }
-  return value;
-}
+// String-state parsing (issue #120): replay-measured 2026-11-16 across noul
+// and score calls; answer deltas parsed-vs-unparsed were not material, so the
+// parsing is intentionally NOT shipped. JSON-encoded string state is forwarded
+// verbatim. See the measurement recorded on issue #120.
 
 // Provider dispatch: sanitize inputs, enforce the payload cap, then hand off.
 // Every error lands in the fallback envelope.
 async function judgeHandler({ state, questions, timeout_ms, model }, ctx) {
-  const cleanState = stripProtoKeys(
-    ENABLE_STRING_STATE_PARSE ? parseStringState(state) : state,
-  );
+  const cleanState = stripProtoKeys(state);
   const cleanQuestions = stripProtoKeys(questions);
   try {
     for (const [name, spec] of Object.entries(cleanQuestions)) {
