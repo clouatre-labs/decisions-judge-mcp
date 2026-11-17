@@ -26,6 +26,18 @@ Add to `claude_desktop_config.json` (`~/Library/Application Support/Claude/`) â€
 
 Then ask your agent anything answerable with a judgment â€” it can call the `judge` tool.
 
+### Zero-setup remote
+
+Prefer not to run anything locally? The same `judge` tool is served as a paid HTTP endpoint at `https://aptu.dev/v1/judge` over [x402](https://www.x402.org): no signup, no API key, $0.005 per call settled in USDC on Base or Solana.
+
+```sh
+curl -X POST https://aptu.dev/v1/judge \
+  -H "Content-Type: application/json" \
+  -d '{"state": {"build": "green", "tests": 490}, "questions": {"is_bug": {"type": "noul", "instructions": "Is this a defect?"}}}'
+```
+
+The unpaid call returns a 402 challenge; pay it and retry with the `X-PAYMENT` header to get the answer.
+
 ## Transport
 
 The server speaks stdio only: newline-delimited JSON-RPC over stdin/stdout, for local MCP clients (Claude Code, codex, goose, pi).
