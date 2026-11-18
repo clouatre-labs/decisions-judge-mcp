@@ -1,8 +1,12 @@
-# decisions-judge-mcp
+<h1 align="center">decisions-judge-mcp</h1>
 
-[![npm version](https://img.shields.io/npm/v/decisions-judge-mcp.svg)](https://www.npmjs.com/package/decisions-judge-mcp)
-[![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
-[![REUSE status](https://api.reuse.software/badge/github.com/clouatre-labs/decisions-judge-mcp)](https://api.reuse.software/info/github.com/clouatre-labs/decisions-judge-mcp)
+<p align="center">
+  <a href="https://github.com/clouatre-labs/decisions-judge-mcp/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/badge/CI-passing-brightgreen.svg?style=for-the-badge" height="20"></a>
+  <a href="https://github.com/clouatre-labs/decisions-judge-mcp/actions/workflows/publish.yml"><img alt="Publish" src="https://img.shields.io/badge/Publish-npm-blue.svg?style=for-the-badge" height="20"></a>
+  <a href="https://github.com/clouatre-labs/decisions-judge-mcp/actions/workflows/scorecard.yml"><img alt="Scorecard" src="https://img.shields.io/badge/Scorecard-enabled-blue.svg?style=for-the-badge" height="20"></a>
+  <a href="https://github.com/clouatre-labs/decisions-judge-mcp/actions/workflows/security-lint.yml"><img alt="Security" src="https://img.shields.io/badge/Security-lint-blue.svg?style=for-the-badge" height="20"></a>
+  <a href="LICENSES/Apache-2.0.txt"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge" height="20"></a>
+</p>
 
 **Typed decisions for AI agents, as an MCP tool.** Ask yes/no probability (`noul`), choice among options, or score on ordered levels about any JSON application state — all questions answered in one fast request.
 
@@ -46,7 +50,11 @@ The server speaks stdio only: newline-delimited JSON-RPC over stdin/stdout, for 
 
 ## Architecture
 
-![architecture diagram](docs/diagrams/architecture.svg)
+<p align="center">
+  <img alt="Architecture diagram: an MCP client sends typed questions to the judge tool, which asks the TypeSafe Jev decision model and returns noul, choice, or score answers" src="docs/diagrams/architecture.svg" width="560">
+</p>
+
+*Figure 1: Typed decisions flow from the MCP client through the judge tool to the TypeSafe decision model.*
 
 ## Demo
 
