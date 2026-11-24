@@ -151,7 +151,7 @@ mcp:
 
 ## Tool reference: `judge`
 
-Inputs: `state` (object \| string \| array — the JSON application state to judge), `questions` (map of name → question spec, see below), `timeout_ms` (optional number, max 60000), and `model` (optional override of the resolved model; the TypeSafe path defaults to `DEFAULT_MODEL` (`jev-1.14.0`), overridable via `TYPESAFE_DEFAULT_MODEL` — see [Configuration](#configuration); the Cloudflare path defaults to `typesafe/jev`).
+Inputs: `state` (object \| string \| array — the JSON application state to judge), `questions` (map of name → question spec, see below), `timeout_ms` (optional number, max 60000), `model` (optional override of the resolved model; the TypeSafe path defaults to `DEFAULT_MODEL` (`jev-1.14.0`), overridable via `TYPESAFE_DEFAULT_MODEL` — see [Configuration](#configuration); the Cloudflare path defaults to `typesafe/jev`), and `images` (optional map of asset name → local image file path, see below).
 
 Instructions and criteria values accept either plain strings or arbitrary JSON structure (objects/arrays). In-flight requests are cancelled when the client disconnects.
 
@@ -160,6 +160,23 @@ Instructions and criteria values accept either plain strings or arbitrary JSON s
 | `noul` | omit | yes/no probability |
 | `choice` | `{option: description\|null}` | winning option name |
 | `score` | ordered array of level descriptions | best matching level |
+
+### Image-backed noul and choice questions (preview)
+
+The optional `images` map enables image-backed `noul` and `choice` questions on the `typesafe-api` provider only. Each entry maps an asset name to a local PNG or JPEG file path; the server reads the file and validates it (PNG/JPEG magic bytes, 256-1568 px per side, max 16 MiB) before base64-encoding it for the API. Reference an asset as `<name>` in `noul`/`choice` instructions; every image must be referenced by at least one such question, and `score`/`box` questions over images are rejected. The Cloudflare provider fails closed on images with a fallback envelope. Preview status: the contract may change; the model accuracy rubric it ships behind is recorded in `docs/audit/2026-11-24-image-rubric-rerun.md`.
+
+```jsonc
+{
+  "state": { "page": "checkout" },
+  "images": { "shot1": "/tmp/checkout-screenshot.png" },
+  "questions": {
+    "layout_defect": {
+      "type": "noul",
+      "instructions": "Does the rendering in <shot1> show a layout defect?"
+    }
+  }
+}
+```
 
 Output: `{answers, model, usage}` on success, `{fallback: true, error}` on failure — failures never block agent workflows. A `noul` answer is a probability, not a verdict: pick your own action threshold in the caller (e.g. proceed only above 0.7).
 

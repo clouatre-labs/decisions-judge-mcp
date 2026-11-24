@@ -3,7 +3,10 @@
 // startup env validation, and an MCP stdio handshake for the default typesafe
 // path. Exits 0 on success, non-zero on any failure or timeout. Does not
 // require TYPESAFE_API_KEY.
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { deflateSync } from "node:zlib";
 import { spawn } from "node:child_process";
 import {
   CF_DEFAULT_MODEL,
@@ -13,7 +16,9 @@ import {
 import {
   DEFAULT_MODEL,
   fallbackFrom,
+  loadImagesFromPaths,
   typesafeJudge,
+  validateImages,
 } from "../providers/typesafe-api.mjs";
 
 const TIMEOUT_MS = 10_000;
@@ -53,6 +58,43 @@ const judgeArgs = {
   state: { ticket: "checkout page blank after Pay" },
   questions: { is_bug: { type: "noul", instructions: "Is this a defect?" } },
 };
+
+// Minimal valid PNG encoder for image smoke cases: a WxH RGB image filled
+// with one solid color (same approach as scripts/probe-images.mjs).
+const CRC_TABLE = new Uint32Array(256).map((_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (const byte of buf) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([len, body, crc]);
+}
+function encodeSolidPng(width, height, [r, g, b]) {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // truecolor RGB
+  const row = Buffer.alloc(width * 3 + 1);
+  for (let x = 0; x < width; x++) row.set([r, g, b], 1 + x * 3);
+  const raw = Buffer.concat(Array.from({ length: height }, () => row));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", deflateSync(raw, { level: 9 })),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
 
 // Deterministic offline coverage: import providers/cloudflare-workers-ai.mjs in-process
 // and stub global.fetch. One happy path plus one edge case per behavior.
@@ -225,6 +267,32 @@ async function runOfflineCloudflareTests() {
         fail(`cloudflare redaction: secrets leaked: ${String(caught?.message)}`);
       }
       ok("cloudflare secret redaction");
+    }
+
+    // Edge case (issue #142): images are typesafe-api-only -- the Cloudflare
+    // path fails closed before any fetch (no image bytes ever sent).
+    {
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls++;
+        return fakeResponse({ body: COMPLETED_BODY });
+      };
+      let caught;
+      try {
+        await cloudflareJudge({
+          ...judgeArgs,
+          questions: {
+            defect: { type: "noul", instructions: "Is there a defect in <shot>?" },
+          },
+          images: { shot: "aGk=" },
+        });
+      } catch (err) {
+        caught = err;
+      }
+      if (!caught || !/images/.test(caught.message) || !/cloudflare/.test(caught.message) || calls !== 0) {
+        fail(`cloudflare images fail-closed: expected pre-fetch throw, got ${String(caught)} calls=${calls}`);
+      }
+      ok(`cloudflare images fail-closed (${caught.message})`);
     }
 
   } finally {
@@ -402,6 +470,118 @@ async function runOfflineTypesafeTests() {
       if (overridden.fallback !== false) fail("model override: unexpected fallback");
       if (!bodies[1].includes("jev-9.9.9")) fail(`model override: expected jev-9.9.9 in ${bodies[1]}`);
       ok("DEFAULT_MODEL pin with caller override honored");
+    }
+
+    // Happy path (issue #142): a noul question referencing an image builds
+    // assets from base64 bytes, sends the danger-zone header, and answers.
+    {
+      process.env.TYPESAFE_API_KEY = "img";
+      const IMG_SUCCESS = {
+        answers: { defect: { type: "noul", noul: 0.95 } },
+        model: DEFAULT_MODEL,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      };
+      let captured;
+      globalThis.fetch = async (...args) => {
+        const req = args[0] instanceof Request ? args[0] : new Request(args[0], { ...args[1], duplex: "half" });
+        captured = { headers: req.headers, body: await req.text() };
+        return json(IMG_SUCCESS, 200);
+      };
+      const out = (
+        await typesafeJudge({
+          state: { page: "checkout" },
+          questions: {
+            defect: { type: "noul", instructions: "Does the rendering in <shot> show a defect?" },
+          },
+          images: { shot: Buffer.from("png-bytes-0").toString("base64") },
+        })
+      ).structuredContent;
+      if (out.fallback !== false || out.answers?.defect?.noul !== 0.95) {
+        fail(`typesafe image happy path: unexpected result ${JSON.stringify(out)}`);
+      }
+      if (captured.headers.get("typesafe-danger-zone-images") !== "true") {
+        fail("typesafe image happy path: missing TypeSafe-Danger-Zone-Images header");
+      }
+      if (!captured.body.includes("png-bytes-0")) fail("typesafe image happy path: image bytes not sent as an asset");
+      if (!captured.body.includes("<shot>")) fail("typesafe image happy path: asset reference missing from request");
+      ok("typesafe image happy path (assets, danger-zone header, typed answer)");
+    }
+
+    // Edge cases (issue #142): validateImages rejections -- score over
+    // images, box over images, and an image no noul/choice question
+    // references. Each must throw a clear error before any request.
+    {
+      const images = { shot: "aGk=" };
+      const cases = [
+        [
+          { rate: { type: "score", instructions: "Rate <shot>", criteria: ["low", "high"] } },
+          /score questions are not supported with images/,
+          "score over images",
+        ],
+        [
+          { locate: { type: "box", instructions: "Locate the button in <shot>" } },
+          /box questions are not supported with images/,
+          "box over images",
+        ],
+        [
+          { is_bug: { type: "noul", instructions: "Is this a defect?" } },
+          /not referenced by any noul or choice question/,
+          "unreferenced image",
+        ],
+      ];
+      for (const [questions, pattern, label] of cases) {
+        let threw;
+        try {
+          validateImages(questions, images);
+        } catch (err) {
+          threw = err;
+        }
+        if (!threw || !pattern.test(threw.message)) {
+          fail(`validateImages ${label}: expected rejection matching ${pattern}, got ${String(threw)}`);
+        }
+      }
+      // And the happy-path cross-check: a noul question referencing the
+      // image is accepted without throwing.
+      validateImages(
+        { is_bug: { type: "noul", instructions: "Is there a defect in <shot>?" } },
+        images,
+      );
+      ok("validateImages rejects score/box over images and unreferenced images, accepts referenced noul");
+    }
+
+    // Edge case (issue #142): loadImagesFromPaths rejections -- wrong format,
+    // dimensions outside 256-1568 px, missing file, and an invalid asset key;
+    // plus the happy path base64 round-trip.
+    {
+      const dir = mkdtempSync(join(tmpdir(), "judge-smoke-"));
+      const tinyPath = join(dir, "tiny.png");
+      writeFileSync(tinyPath, encodeSolidPng(128, 128, [255, 0, 0]));
+      const textPath = join(dir, "text.png");
+      writeFileSync(textPath, "not an image");
+      const goodPath = join(dir, "good.png");
+      writeFileSync(goodPath, encodeSolidPng(256, 256, [0, 0, 255]));
+      const cases = [
+        [{ shot: tinyPath }, /256-1568 px/, "undersized dimensions"],
+        [{ shot: textPath }, /not a PNG or JPEG/, "wrong format"],
+        [{ shot: join(dir, "missing.png") }, /not readable/, "missing file"],
+        [{ "bad key!": goodPath }, /outside \[A-Za-z0-9_-\]/, "invalid asset key"],
+      ];
+      for (const [images, pattern, label] of cases) {
+        let threw;
+        try {
+          loadImagesFromPaths(images);
+        } catch (err) {
+          threw = err;
+        }
+        if (!threw || !pattern.test(threw.message)) {
+          fail(`loadImagesFromPaths ${label}: expected rejection matching ${pattern}, got ${String(threw)}`);
+        }
+      }
+      const loaded = loadImagesFromPaths({ shot: goodPath });
+      if (loaded.shot !== encodeSolidPng(256, 256, [0, 0, 255]).toString("base64")) {
+        fail("loadImagesFromPaths happy path: base64 mismatch");
+      }
+      ok("loadImagesFromPaths rejects invalid images, base64-encodes valid ones");
     }
   } finally {
     globalThis.fetch = savedFetch;
@@ -822,7 +1002,10 @@ function runStdioDefaultPathTest() {
           stdioFail(`expected array-questions hint, got: ${text8}`);
         }
         ok(`array-questions hint: ${text8.slice(0, 200)}`);
-        // Issue #122: tools/list must succeed (no -32603) and stay under 3 KB.
+        // Issue #122 + #142: tools/list must succeed (no -32603) and stay
+        // under 4 KiB. The original 3 KiB target left only 44 bytes of
+        // headroom; the #142 images schema (asset name -> local file path)
+        // adds ~400 bytes of JSON schema, so the cap is 4096.
         send({ jsonrpc: "2.0", id: 9, method: "tools/list" });
       } else if (msg.id === 9) {
         clearTimeout(timer);
@@ -834,10 +1017,10 @@ function runStdioDefaultPathTest() {
         if (!msg.result?.tools?.length) {
           stdioFail(`tools/list returned no tools: ${toolsJson.slice(0, 200)}`);
         }
-        if (bytes >= 3072) {
-          stdioFail(`tools/list payload too large: ${bytes} bytes (target < 3072)`);
+        if (bytes >= 4096) {
+          stdioFail(`tools/list payload too large: ${bytes} bytes (target < 4096)`);
         }
-        ok(`tools/list ok (${bytes} bytes, under 3072)`);
+        ok(`tools/list ok (${bytes} bytes, under 4096)`);
         send({
           jsonrpc: "2.0",
           id: 10,
@@ -920,6 +1103,46 @@ function runStdioDefaultPathTest() {
   proc.on("exit", (code) => stdioFail(`server exited early with code ${code}`));
 }
 
+// Issue #142: live image smoke case -- only when TYPESAFE_API_KEY is set.
+// Writes a solid 256x256 PNG to a temp file and calls the SDK directly (as
+// scripts/probe-images.mjs does; the in-process typesafeJudge client is
+// cached with offline fake keys by earlier cases). Requires a non-fallback
+// noul answer.
+async function runLiveImageSmokeTest() {
+  const key = process.env.TYPESAFE_API_KEY;
+  if (!key || key.trim() === "") {
+    console.log("smoke-judge: SKIP (live image case; TYPESAFE_API_KEY not set)");
+    return;
+  }
+  const { TypeSafeClient, image, noul } = await import("@typesafe-ai/sdk");
+  const dir = mkdtempSync(join(tmpdir(), "judge-smoke-live-"));
+  const imagePath = join(dir, "shot.png");
+  writeFileSync(imagePath, encodeSolidPng(512, 512, [255, 0, 0]));
+  const bytes = readFileSync(imagePath);
+  try {
+    const client = new TypeSafeClient({ logLevel: "off" });
+    const result = await client.systemOne(
+      {
+        state: image(bytes),
+        questions: {
+          red_present: {
+            type: "noul",
+            instructions: "Is there a solid red colored region in the image?",
+          },
+        },
+        model: DEFAULT_MODEL,
+      },
+      { headers: { "TypeSafe-Danger-Zone-Images": "true" }, timeout: 30000 },
+    );
+    const p = result.answers?.red_present?.noul;
+    if (typeof p !== "number") {
+      fail(`live image smoke: unexpected result ${JSON.stringify(result).slice(0, 300)}`);
+    }
+    ok(`live image smoke (noul=${p})`);
+  } catch (err) {
+    fail(`live image smoke: request failed: ${err}`);
+  }
+}
 await runOfflineCloudflareTests();
 
 await runOfflineTypesafeTests();
@@ -948,4 +1171,5 @@ await runStartupFailureCase(
 );
 
 runStdioDiscoverTest();
+await runLiveImageSmokeTest();
 setTimeout(() => runStdioDefaultPathTest(), 500);

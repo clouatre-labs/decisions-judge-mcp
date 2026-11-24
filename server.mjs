@@ -31,7 +31,9 @@ import {
   envelope,
   fallbackEnvelope,
   fallbackFrom,
+  loadImagesFromPaths,
   typesafeJudge,
+  validateImages,
 } from "./providers/typesafe-api.mjs";
 
 // Startup provider selection: JUDGE_PROVIDER is read exactly once, at server
@@ -210,6 +212,12 @@ const inputSchema = z.object({
     .describe(
       "Optional model override.",
     ),
+  images: z
+    .record(z.string().min(1), z.string().min(1))
+    .optional()
+    .describe(
+      'Optional map of asset name to local PNG/JPEG file path (256-1568 px, max 16 MiB); path must be accessible from the server filesystem. Reference as <name> in noul/choice instructions. Preview, typesafe-api provider only.',
+    ),
 });
 
 const outputSchema = z.object({
@@ -259,9 +267,25 @@ const MAX_PAYLOAD_BYTES = 262144;
 
 // Provider dispatch: sanitize inputs, enforce the payload cap, then hand off.
 // Every error lands in the fallback envelope.
-async function judgeHandler({ state, questions, timeout_ms, model }, ctx) {
+async function judgeHandler({ state, questions, images, timeout_ms, model }, ctx) {
   const cleanState = stripProtoKeys(state);
   const cleanQuestions = stripProtoKeys(questions);
+  const cleanImages = stripProtoKeys(images);
+  // Images are validated before any request: each entry must be referenced
+  // by a noul/choice question as <name>, and each file is read, checked for
+  // PNG/JPEG magic bytes, 256-1568 px per side, and the 16 MiB cap, then
+  // base64-encoded (loadImagesFromPaths in providers/typesafe-api.mjs).
+  try {
+    validateImages(cleanQuestions, cleanImages);
+  } catch (err) {
+    return fallbackEnvelope(err && err.message ? err.message : "images validation failed");
+  }
+  let encodedImages;
+  try {
+    encodedImages = loadImagesFromPaths(cleanImages);
+  } catch (err) {
+    return fallbackEnvelope(err && err.message ? err.message : "image loading failed");
+  }
   // Question specs are validated exactly once, inside typesafeJudge via
   // buildQuestion (providers/typesafe-api.mjs); per-spec hints flow through
   // fallbackFrom into the envelope. Schema-layer fix hints (missing type,
@@ -279,6 +303,7 @@ async function judgeHandler({ state, questions, timeout_ms, model }, ctx) {
             const payload = await cloudflareJudge({
               state: args.state,
               questions: args.questions,
+              images: args.images,
               model: args.model,
               timeout_ms: args.timeout_ms,
               signal: c?.signal,
@@ -289,7 +314,10 @@ async function judgeHandler({ state, questions, timeout_ms, model }, ctx) {
           }
         }
       : typesafeJudge;
-  return dispatch({ state: cleanState, questions: cleanQuestions, timeout_ms, model }, ctx);
+  return dispatch(
+    { state: cleanState, questions: cleanQuestions, images: encodedImages, timeout_ms, model },
+    ctx,
+  );
 }
 
 // Build the McpServer with the judge tool registered.
@@ -305,7 +333,7 @@ function buildServer() {
     "judge",
     {
       description:
-        "Ask the TypeSafe System One model (Jev) typed questions (noul/choice/score) about JSON application state; all questions are answered in one fast request. Default model: DEFAULT_MODEL (jev-1.14.0), overridable via TYPESAFE_DEFAULT_MODEL or the model input. Returns {answers, model, usage} or {fallback: true, error}.",
+        'Ask the TypeSafe System One model typed questions (noul/choice/score) about JSON application state in one fast request. Preview: optional images map of asset name to local PNG/JPEG file path (256-1568 px, max 16 MiB) enables image-backed noul/choice via <name> references in instructions. Default model jev-1.14.0, overridable via TYPESAFE_DEFAULT_MODEL or model. Returns {answers, model, usage} or {fallback: true, error}.',
       inputSchema,
       outputSchema,
       annotations: {

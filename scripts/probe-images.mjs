@@ -107,7 +107,7 @@ for (const c of CASES) {
         state: image(png),
         questions: {
           locate: box(`The ${c.name} square`),
-          is_present: noul(`Is there a ${c.name} square in the image?`),
+          is_present: noul(`Is there a solid ${c.name} colored region in the image?`),
         },
         model: MODEL,
       },
