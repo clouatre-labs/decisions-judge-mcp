@@ -133,8 +133,15 @@ jobs:
             echo "::error::package version ${PKG_VERSION} does not match tag ${TAG_NAME}"; exit 1
           fi
 
-      - name: Ensure npm supports OIDC trusted publishing
-        run: npm install -g npm@latest
+      # Node 26 bundles npm 11, which supports OIDC trusted publishing; no
+      # global install, so nothing unpinned enters the release path.
+      - name: Verify bundled npm supports OIDC trusted publishing
+        run: |
+          major="$(npm --version | cut -d. -f1)"
+          if [ "${major}" -lt 11 ]; then
+            echo "::error::npm $(npm --version) is too old for OIDC trusted publishing (need 11+)"
+            exit 1
+          fi
 
       - name: Install dependencies
         run: npm ci
