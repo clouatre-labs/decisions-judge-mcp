@@ -33,8 +33,7 @@ grounded in the release history; upcoming direction reflects open issues.
   rubric results.
 - **Third judge provider** — evaluate the OpenAI Decisions API as an
   additional backend behind the same provider interface (#96).
-- **Supply-chain hygiene** — resolve the OpenSSF Scorecard failure on `main`
-  caused by a GitHub API GraphQL allow-list error (#86), and continue toward
-  the Best Practices silver badge.
+- **Supply-chain hygiene** — keep the OpenSSF Best Practices badge
+  current.
 - **Keep it small** — no new transports or surfaces planned; future work
   favors provider quality, validation clarity, and documentation over scope.
