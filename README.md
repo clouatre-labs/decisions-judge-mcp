@@ -4,9 +4,10 @@
   <a href="https://www.npmjs.com/package/decisions-judge-mcp"><img alt="npm" src="https://img.shields.io/npm/v/decisions-judge-mcp.svg?style=for-the-badge" height="28"></a>
   <a href="LICENSES/Apache-2.0.txt"><img alt="License" src="https://img.shields.io/badge/License-Apache--2.0-blue.svg?style=for-the-badge" height="28"></a>
   <a href="https://api.reuse.software/info/github.com/clouatre-labs/decisions-judge-mcp"><img alt="REUSE" src="https://img.shields.io/reuse/compliance/github.com/clouatre-labs/decisions-judge-mcp?style=for-the-badge" height="28"></a>
+  <a href="https://www.bestpractices.dev/projects/17101"><img alt="OpenSSF Best Practices" src="https://img.shields.io/cii/level/17101?style=for-the-badge" height="28"></a>
 </p>
 
-**Typed decisions for AI agents, as an MCP tool.** Ask yes/no probability (`noul`), choice among options, or score on ordered levels about any JSON application state — all questions answered in one fast request.
+**Typed decisions for AI agents, as an MCP tool.** Ask yes/no probability (`noul`), choice among options, or score on ordered levels about any JSON application state — all questions answered in one fast request. [OpenSSF Best Practices silver certified](https://www.bestpractices.dev/projects/17101).
 
 Backed by the [TypeSafe System One](https://typesafe.ai) decision model (Jev) via [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk), with an opt-in [Cloudflare Workers AI](https://developers.cloudflare.com/ai/models/typesafe/jev/) provider — see [Providers](#providers). Further reading on decision-model patterns, from the author's [blog](https://clouatre.ca/blog/).
 
