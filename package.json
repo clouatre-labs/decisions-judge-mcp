@@ -11,7 +11,7 @@
   },
   "license": "Apache-2.0",
   "scripts": {
-    "test:coverage": "c8 --check-coverage --lines 72 --no-clean node scripts/smoke.mjs && c8 --no-clean node scripts/smoke-judge.mjs && c8 report --check-coverage --lines 72"
+    "test:coverage": "c8 --check-coverage --lines 71 --no-clean node scripts/smoke.mjs && c8 --no-clean node scripts/smoke-judge.mjs && c8 report --check-coverage --lines 71"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",

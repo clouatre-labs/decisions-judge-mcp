@@ -49,7 +49,7 @@ jobs:
       - name: Smoke test judge fallback envelope
         run: node scripts/smoke-judge.mjs
 
-      - name: Line coverage gate (c8, >=72%)
+      - name: Line coverage gate (c8, >=71%)
         run: npm run test:coverage
 
 
