@@ -1,5 +1,7 @@
 # Security policy
 
+This project has earned the [OpenSSF Best Practices silver badge](https://www.bestpractices.dev/projects/17101/silver).
+
 ## Reporting a vulnerability
 
 Do not open a public GitHub issue for security vulnerabilities.
