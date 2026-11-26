@@ -11,7 +11,8 @@
   },
   "license": "Apache-2.0",
   "scripts": {
-    "test:coverage": "c8 --check-coverage --lines 80 bash -c 'node scripts/smoke.mjs && node scripts/smoke-judge.mjs && node scripts/smoke-server.mjs'"
+    "test": "node --check server.mjs && node scripts/smoke.mjs && node scripts/smoke-judge.mjs && node scripts/smoke-server.mjs",
+    "test:coverage": "c8 --check-coverage --lines 80 npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
