@@ -10,9 +10,8 @@ import { deflateSync } from "node:zlib";
 import { spawn } from "node:child_process";
 import {
   CF_DEFAULT_MODEL,
-  cfModelSelector,
   cloudflareJudge,
-  normalizeCfModel,
+  resolveCfModel,
 } from "../providers/cloudflare-workers-ai.mjs";
 import {
   DEFAULT_MODEL,
@@ -144,36 +143,28 @@ async function runOfflineCloudflareTests() {
       if ("images" in lastBody) fail(`cloudflare happy path: unexpected images key ${JSON.stringify(lastBody)}`);
       ok("cloudflare happy path (no images key in body)");
 
-      // Issue #160: default model is @cf/cloudflare/clef; bare clef and
-      // clef-flash overrides are prefixed.
+      // Issue #166: only the Clef family is accepted; every accepted input
+      // resolves to a route plus the required body selector.
       if (CF_DEFAULT_MODEL !== "@cf/cloudflare/clef") {
         fail(`cloudflare model pin: CF_DEFAULT_MODEL ${CF_DEFAULT_MODEL}`);
       }
-      const pinCases = [
-        [undefined, "@cf/cloudflare/clef"],
-        ["clef", "@cf/cloudflare/clef"],
-        ["clef-flash", "@cf/cloudflare/clef-flash"],
-        ["some/other-model", "some/other-model"],
+      const resolveCases = [
+        [undefined, "@cf/cloudflare/clef", "clef"],
+        ["clef", "@cf/cloudflare/clef", "clef"],
+        ["@cf/cloudflare/clef", "@cf/cloudflare/clef", "clef"],
+        ["clef-flash", "@cf/cloudflare/clef-flash", "clef-flash"],
+        ["@cf/cloudflare/clef-flash", "@cf/cloudflare/clef-flash", "clef-flash"],
       ];
-      for (const [input, want] of pinCases) {
-        const got = normalizeCfModel(input);
-        if (got !== want) fail(`cloudflare model pin: normalizeCfModel(${input}) = ${got}, want ${want}`);
+      for (const [input, wantRoute, wantSelector] of resolveCases) {
+        const got = resolveCfModel(input);
+        if (got.route !== wantRoute || got.selector !== wantSelector) {
+          fail(`cloudflare model pin: resolveCfModel(${input}) = ${JSON.stringify(got)}, want ${wantRoute}/${wantSelector}`);
+        }
       }
       ok(`cloudflare model pin (${CF_DEFAULT_MODEL}, bare clef* prefixed)`);
 
-      // Edge case: selector only exists for prefixed Clef ids; clef-flash
-      // routes and selects as clef-flash.
-      const selectorCases = [
-        ["@cf/cloudflare/clef", "clef"],
-        ["@cf/cloudflare/clef-flash", "clef-flash"],
-        ["clef", undefined],
-        ["some/other-model", undefined],
-        [undefined, undefined],
-      ];
-      for (const [input, want] of selectorCases) {
-        const got = cfModelSelector(input);
-        if (got !== want) fail(`cloudflare selector: cfModelSelector(${input}) = ${got}, want ${want}`);
-      }
+      // Happy path: a clef-flash override routes to @cf/cloudflare/clef-flash
+      // and carries model clef-flash in the body.
       globalThis.fetch = async (url, init) => {
         calls++;
         lastUrl = String(url);
@@ -188,26 +179,35 @@ async function runOfflineCloudflareTests() {
       ) {
         fail(`cloudflare selector: unexpected clef-flash result ${JSON.stringify(flash)} url=${lastUrl}`);
       }
-      ok("cloudflare selector (clef, clef-flash, undefined otherwise)");
+      ok("cloudflare selector (clef, clef-flash only)");
 
-      // Edge case: a non-Clef override is passed through verbatim and sends
-      // no model key in the body.
-      globalThis.fetch = async (url, init) => {
-        calls++;
-        lastUrl = String(url);
-        lastBody = JSON.parse(init?.body ?? "{}");
+      // Edge case: a non-Clef override is rejected before any request, both
+      // from the resolver and from cloudflareJudge, and no fetch is issued.
+      let resolverError;
+      try {
+        resolveCfModel("some/other-model");
+      } catch (err) {
+        resolverError = err;
+      }
+      if (!resolverError || !/must be "clef" or "clef-flash"/.test(resolverError.message)) {
+        fail(`cloudflare non-Clef override: resolver did not reject, got ${resolverError?.message}`);
+      }
+      let nonClefCalls = 0;
+      globalThis.fetch = async () => {
+        nonClefCalls++;
         return fakeResponse({ body: CLEF_BODY });
       };
-      await cloudflareJudge({ ...judgeArgs, model: "some/other-model" });
-      if (
-        !lastUrl.endsWith("/ai/run/some/other-model") ||
-        "model" in lastBody ||
-        JSON.stringify(lastBody) !==
-          JSON.stringify({ state: judgeArgs.state, questions: judgeArgs.questions })
-      ) {
-        fail(`cloudflare non-Clef override: unexpected url=${lastUrl} body=${JSON.stringify(lastBody)}`);
+      let judgeError;
+      try {
+        await cloudflareJudge({ ...judgeArgs, model: "some/other-model" });
+      } catch (err) {
+        judgeError = err;
       }
-      ok("cloudflare non-Clef override sends no model key");
+      if (!judgeError || judgeError.message !== resolverError.message) {
+        fail(`cloudflare non-Clef override: unexpected rejection ${judgeError?.message}`);
+      }
+      if (nonClefCalls !== 0) fail(`cloudflare non-Clef override: expected 0 fetch calls, got ${nonClefCalls}`);
+      ok("cloudflare non-Clef override rejected before request");
     }
 
     // Happy path: only 429 and transport errors are retried; 4xx fail fast.

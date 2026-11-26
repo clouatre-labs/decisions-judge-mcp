@@ -150,7 +150,7 @@ mcp:
 
 ## Tool reference: `judge`
 
-Inputs: `state` (object \| string \| array — the JSON application state to judge), `questions` (map of name → question spec, see below), `timeout_ms` (optional number, max 60000), `model` (optional override of the resolved model; the TypeSafe path defaults to `DEFAULT_MODEL` (`jev-1.14.0`), overridable via `TYPESAFE_DEFAULT_MODEL` — see [Configuration](#configuration); the Cloudflare path defaults to `@cf/cloudflare/clef` and accepts `clef` or `clef-flash`), and `images` (optional map of asset name → local image file path, see below).
+Inputs: `state` (object \| string \| array — the JSON application state to judge), `questions` (map of name → question spec, see below), `timeout_ms` (optional number, max 60000), `model` (optional override of the resolved model; the TypeSafe path defaults to `DEFAULT_MODEL` (`jev-1.14.0`), overridable via `TYPESAFE_DEFAULT_MODEL` — see [Configuration](#configuration); the Cloudflare path defaults to `@cf/cloudflare/clef` and accepts only `clef` or `clef-flash` (also as `@cf/cloudflare/clef` / `@cf/cloudflare/clef-flash`); any other `model` is rejected before the request with a fallback envelope), and `images` (optional map of asset name → local image file path, see below).
 
 Instructions and criteria values accept either plain strings or arbitrary JSON structure (objects/arrays). In-flight requests are cancelled when the client disconnects.
 
@@ -245,7 +245,7 @@ Fill in the state and send it to the judge tool.
 
 ## Providers
 
-Selected once at startup via `JUDGE_PROVIDER` (default `typesafe-api`); the judge tool's schema and behavior are identical under both providers, and both accept the `images` input (at most 4 images per request on `cloudflare-workers-ai`). `typesafe-api` uses `@typesafe-ai/sdk` with a single TYPESAFE_API_KEY (see [Configuration](#configuration)); `cloudflare-workers-ai` runs Cloudflare's Clef decision model (default `@cf/cloudflare/clef`, a rolling alias with no version pin; a `clef` or `clef-flash` `model` override selects the same family) through Cloudflare Workers AI and requires the two Cloudflare variables above.
+Selected once at startup via `JUDGE_PROVIDER` (default `typesafe-api`); the judge tool's schema and behavior are identical under both providers, and both accept the `images` input (at most 4 images per request on `cloudflare-workers-ai`). `typesafe-api` uses `@typesafe-ai/sdk` with a single TYPESAFE_API_KEY (see [Configuration](#configuration)); `cloudflare-workers-ai` runs Cloudflare's Clef decision model (default `@cf/cloudflare/clef`, a rolling alias with no version pin; a `clef` or `clef-flash` `model` override selects the same family; only those two values (also accepted as `@cf/cloudflare/clef` / `@cf/cloudflare/clef-flash`) are accepted on the Cloudflare path, and any other `model` is rejected before the request with a fallback envelope) through Cloudflare Workers AI and requires the two Cloudflare variables above.
 
 ## Development
 

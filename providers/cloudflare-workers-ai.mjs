@@ -7,8 +7,10 @@
 //
 // Clef contract (issue #160):
 // POST /client/v4/accounts/{id}/ai/run/@cf/cloudflare/clef with a flat body
-// {model, state, questions[, images]}, where `model` is the input selector
-// ("clef" or "clef-flash"). `images` (issue #163) is an array of at most 4
+// {model, state, questions[, images]}, where `model` is the required body
+// selector ("clef" or "clef-flash"). Only clef | clef-flash (also accepted
+// in their @cf/cloudflare/<id> forms) are accepted as a model override;
+// anything else is rejected before the request. `images` (issue #163) is an array of at most 4
 // entries {content_type, base64}, present only when images are supplied.
 // The response is unwrapped from result.{answers, model, usage}. Clef is a
 // rolling alias with no version pin.
@@ -19,20 +21,18 @@
 const CF_RETRY_LIMIT = 2;
 const CF_BACKOFF_MS = 500;
 
-// Default model; bare clef and clef-flash overrides are prefixed with
-// @cf/cloudflare/ so the Workers AI run endpoint accepts them.
 export const CF_DEFAULT_MODEL = "@cf/cloudflare/clef";
-export function normalizeCfModel(model) {
-  if (!model) return CF_DEFAULT_MODEL;
-  return /^clef(-flash)?$/.test(model) ? `@cf/cloudflare/${model}` : model;
-}
 
-// Body selector for a Clef model id; undefined for anything else, in which
-// case the request carries no `model` key.
-export function cfModelSelector(model) {
-  if (model === "@cf/cloudflare/clef") return "clef";
-  if (model === "@cf/cloudflare/clef-flash") return "clef-flash";
-  return undefined;
+// Resolve a model override to the URL route and the required body selector
+// for the Clef family. Throws before any request for anything else.
+export function resolveCfModel(model) {
+  if (model === undefined || model === "clef" || model === "@cf/cloudflare/clef") {
+    return { route: CF_DEFAULT_MODEL, selector: "clef" };
+  }
+  if (model === "clef-flash" || model === "@cf/cloudflare/clef-flash") {
+    return { route: "@cf/cloudflare/clef-flash", selector: "clef-flash" };
+  }
+  throw new Error(`cloudflare provider model must be "clef" or "clef-flash" (got "${model}")`);
 }
 
 // Cloudflare account ids are 32 hex chars; reject anything else (empty,
@@ -111,6 +111,7 @@ function buildClefImages(images) {
 }
 
 export async function cloudflareJudge({ state, questions, images, model, timeout_ms, signal }) {
+  const { route, selector } = resolveCfModel(model);
   const clefImages = buildClefImages(images);
   const token = process.env.CLOUDFLARE_API_TOKEN;
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -137,11 +138,9 @@ export async function cloudflareJudge({ state, questions, images, model, timeout
     : undefined;
   try {
     if (controller.signal.aborted) throw new Error("request aborted");
-    const runModel = normalizeCfModel(model);
-    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${runModel}`;
-    const selector = cfModelSelector(runModel);
+    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${route}`;
     const body = JSON.stringify({
-      ...(selector ? { model: selector } : {}),
+      model: selector,
       state,
       questions,
       ...(clefImages.length > 0 ? { images: clefImages } : {}),
@@ -217,7 +216,7 @@ export async function cloudflareJudge({ state, questions, images, model, timeout
       }
       return {
         answers: result.answers,
-        model: result.model ?? runModel,
+        model: result.model ?? route,
         usage: result.usage,
         fallback: false,
       };
