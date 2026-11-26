@@ -2,14 +2,15 @@
 
 ## Project overview
 
-decisions-judge-mcp is an MCP stdio server (Node >= 22, ESM, single `server.mjs`) exposing one `judge` tool backed by the @typesafe-ai/sdk: it sends application state plus typed questions (noul, choice, score) to the TypeSafe System One model and returns structured answers; failures return a `{fallback: true, error}` envelope instead of blocking.
+decisions-judge-mcp is an MCP stdio server (Node >= 22, ESM) exposing one `judge` tool backed by the @typesafe-ai/sdk: it sends application state plus typed questions (noul, choice, score) to the TypeSafe System One model and returns structured answers; failures return a `{fallback: true, error}` envelope instead of blocking. Layout: `server.mjs` is the entry point, `schema.mjs` holds the shared judge question schema (zod specs and fix hints, exported as `decisions-judge-mcp/schema`), `prompts.mjs` holds the prompt templates, and `providers/` holds the TypeSafe API and Cloudflare Workers AI backends.
 
 ## Stack & Commands
 
-npm on Node 24; MCP SDK + zod for schema validation.
+npm on Node >= 22 (CI runs Node 26); MCP SDK + zod for schema validation.
 
 ```sh
 # test:   node --check server.mjs && node scripts/smoke.mjs && node scripts/smoke-judge.mjs
+# coverage: npm run test:coverage   # c8, >= 80% lines, runs the three smoke scripts
 # lint:   npx markdownlint-cli2 "**/*.md"
 # format: npx markdownlint-cli2 --fix "**/*.md"
 ```
