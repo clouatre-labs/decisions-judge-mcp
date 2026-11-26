@@ -245,7 +245,7 @@ Fill in the state and send it to the judge tool.
 
 ## Providers
 
-Selected once at startup via `JUDGE_PROVIDER` (default `typesafe-api`); the judge tool's schema and behavior are identical under both providers, and both accept the `images` input (at most 4 images per request on `cloudflare-workers-ai`). `typesafe-api` uses `@typesafe-ai/sdk` with one or more TypeSafe API keys (rotation details in [Configuration](#configuration)); `cloudflare-workers-ai` runs Cloudflare's Clef decision model (default `@cf/cloudflare/clef`, a rolling alias with no version pin; a `clef` or `clef-flash` `model` override selects the same family) through Cloudflare Workers AI and requires the two Cloudflare variables above.
+Selected once at startup via `JUDGE_PROVIDER` (default `typesafe-api`); the judge tool's schema and behavior are identical under both providers, and both accept the `images` input (at most 4 images per request on `cloudflare-workers-ai`). `typesafe-api` uses `@typesafe-ai/sdk` with a single TYPESAFE_API_KEY (see [Configuration](#configuration)); `cloudflare-workers-ai` runs Cloudflare's Clef decision model (default `@cf/cloudflare/clef`, a rolling alias with no version pin; a `clef` or `clef-flash` `model` override selects the same family) through Cloudflare Workers AI and requires the two Cloudflare variables above.
 
 ## Development
 
@@ -254,9 +254,11 @@ npm ci
 node --check server.mjs
 node scripts/smoke.mjs         # MCP stdio initialize handshake
 node scripts/smoke-judge.mjs   # judge fallback envelope (no API key needed)
+node scripts/smoke-server.mjs   # stdio handshake, keyless fallback, schema subpath
 # Image accuracy probe (issue #95; needs TYPESAFE_API_KEY, makes live API calls):
 # node scripts/probe-images.mjs [--model jev-1.14.0] [--provider cloudflare [--model clef|clef-flash]]
 node server.mjs                # stdio server; needs TYPESAFE_API_KEY to answer
+npm run test:coverage          # c8 line-coverage gate, >= 80%
 ```
 
 Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clouatre-labs/agentic-coder-skill), which uses `judge` for subagent orchestration and context-window decisions inside an agent harness.
