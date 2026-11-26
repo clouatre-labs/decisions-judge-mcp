@@ -39,13 +39,11 @@ curl -X POST https://aptu.dev/v1/judge \
   -d '{"state": {"build": "green", "tests": 490}, "questions": {"is_bug": {"type": "noul", "instructions": "Is this a defect?"}}}'
 ```
 
-The unpaid call returns a 402 challenge; pay it and retry with the `X-PAYMENT` header to get the answer.
+The unpaid call returns 402 with an x402 v2 challenge in the `PAYMENT-REQUIRED` header; pay it and retry with the `PAYMENT-SIGNATURE` header to get the answer. The same judge is available to MCP clients as a remote Streamable HTTP server at `https://aptu.dev/mcp`.
 
 ## Transport
 
-The server speaks stdio only: newline-delimited JSON-RPC over stdin/stdout, for local MCP clients (Claude Code, codex, goose, pi).
-
-**Security warning:** the HTTP endpoint is unauthenticated. Production remote deployments must be fronted by an authenticating OAuth 2.1 proxy per the MCP 2026-07-28 authorization specification.
+The server speaks stdio only: newline-delimited JSON-RPC over stdin/stdout, for local MCP clients (Claude Code, codex, goose, pi). It serves no HTTP itself; use [aptu.dev](#zero-setup-remote) for remote access.
 
 ## Architecture
 
