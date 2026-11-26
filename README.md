@@ -265,6 +265,8 @@ node server.mjs                # stdio server; needs TYPESAFE_API_KEY to answer
 
 Flagship consumer: [`clouatre-labs/agentic-coder-skill`](https://github.com/clouatre-labs/agentic-coder-skill), which uses `judge` for subagent orchestration and context-window decisions inside an agent harness.
 
+The judge question schema is importable as `decisions-judge-mcp/schema` (exports `entryType`, `questionSpec`, `questionsSchema`); aptu.dev uses it to keep its paid `/v1/judge` identical to this tool.
+
 ## License
 
 Apache-2.0, see [LICENSE](LICENSE).
