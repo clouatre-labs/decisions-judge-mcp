@@ -2,9 +2,13 @@
 //
 // Explicit selection only: never inferred from which env vars happen to be
 // set. Minimal retry policy: only 429 and transport errors are retried; auth
-// (401/403) and other 4xx (including 402 AI Gateway prepaid-credit errors)
-// fail fast. Abort-aware via an AbortController combining timeout_ms and the
-// caller's signal.
+// (401/403) and other 4xx fail fast. Abort-aware via an AbortController
+// combining timeout_ms and the caller's signal.
+//
+// Clef contract (issue #160): POST /client/v4/accounts/{id}/ai/run/@cf/cloudflare/clef
+// with a flat body {model, state, questions}, where `model` is the input
+// selector ("clef" or "clef-flash"). The response is unwrapped from
+// result.{answers, model, usage}. Clef is a rolling alias with no version pin.
 //
 // Any surfaced error string is scrubbed of the token and account id values
 // before reaching the caller.
@@ -12,12 +16,20 @@
 const CF_RETRY_LIMIT = 2;
 const CF_BACKOFF_MS = 500;
 
-// Pinned default model; bare jev-* overrides are prefixed with typesafe/ so
-// the Workers AI run endpoint accepts them.
-export const CF_DEFAULT_MODEL = "typesafe/jev-1.14.0";
+// Default model; bare clef and clef-flash overrides are prefixed with
+// @cf/cloudflare/ so the Workers AI run endpoint accepts them.
+export const CF_DEFAULT_MODEL = "@cf/cloudflare/clef";
 export function normalizeCfModel(model) {
   if (!model) return CF_DEFAULT_MODEL;
-  return /^jev-/.test(model) ? `typesafe/${model}` : model;
+  return /^clef(-flash)?$/.test(model) ? `@cf/cloudflare/${model}` : model;
+}
+
+// Body selector for a Clef model id; undefined for anything else, in which
+// case the request carries no `model` key.
+export function cfModelSelector(model) {
+  if (model === "@cf/cloudflare/clef") return "clef";
+  if (model === "@cf/cloudflare/clef-flash") return "clef-flash";
+  return undefined;
 }
 
 // Cloudflare account ids are 32 hex chars; reject anything else (empty,
@@ -70,7 +82,8 @@ function isPlainObject(value) {
 }
 
 export async function cloudflareJudge({ state, questions, images, model, timeout_ms, signal }) {
-  // Fail closed on images: image-backed questions are typesafe-api-only. The
+  // Fail closed on images: image-backed questions are typesafe-api-only (see
+  // issue #142). The
   // check runs before any fetch so no image bytes are ever sent.
   const imageNames = images && typeof images === "object" ? Object.keys(images) : [];
   if (imageNames.length > 0) {
@@ -103,10 +116,13 @@ export async function cloudflareJudge({ state, questions, images, model, timeout
     : undefined;
   try {
     if (controller.signal.aborted) throw new Error("request aborted");
-    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run`;
+    const runModel = normalizeCfModel(model);
+    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${runModel}`;
+    const selector = cfModelSelector(runModel);
     const body = JSON.stringify({
-      model: normalizeCfModel(model),
-      input: { state, questions },
+      ...(selector ? { model: selector } : {}),
+      state,
+      questions,
     });
     let lastErr = null;
     for (let attempt = 0; attempt <= CF_RETRY_LIMIT; attempt++) {
@@ -166,17 +182,10 @@ export async function cloudflareJudge({ state, questions, images, model, timeout
         err.status = res.status;
         throw err;
       }
-      // Defensive unwrap of Cloudflare's REST envelope; unexpected shapes are
-      // errors, never crashes.
-      const outer = parsed && typeof parsed === "object" ? parsed.result : undefined;
-      const evaluation = outer && typeof outer === "object" ? outer.result : undefined;
-      if (
-        parsed?.success !== true ||
-        !isPlainObject(outer) ||
-        outer.state !== "Completed" ||
-        !isPlainObject(evaluation) ||
-        !isPlainObject(evaluation.answers)
-      ) {
+      // Defensive unwrap of Cloudflare's REST envelope (result.{answers,
+      // model, usage}); unexpected shapes are errors, never crashes.
+      const result = parsed && typeof parsed === "object" ? parsed.result : undefined;
+      if (parsed?.success !== true || !isPlainObject(result) || !isPlainObject(result.answers)) {
         const err = new Error(
           cfErrorEnvelopeMessage(parsed, redact) ??
             "cloudflare returned an unexpected response envelope",
@@ -185,9 +194,9 @@ export async function cloudflareJudge({ state, questions, images, model, timeout
         throw err;
       }
       return {
-        answers: evaluation.answers,
-        model: evaluation.model ?? normalizeCfModel(model),
-        usage: evaluation.usage,
+        answers: result.answers,
+        model: result.model ?? runModel,
+        usage: result.usage,
         fallback: false,
       };
     }

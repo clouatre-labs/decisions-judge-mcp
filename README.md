@@ -9,7 +9,7 @@
 
 **Typed decisions for AI agents, as an MCP tool.** Ask yes/no probability (`noul`), choice among options, or score on ordered levels about any JSON application state — all questions answered in one fast request. [OpenSSF Best Practices silver certified](https://www.bestpractices.dev/projects/17101).
 
-Backed by the [TypeSafe System One](https://typesafe.ai) decision model (Jev) via [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk), with an opt-in [Cloudflare Workers AI](https://developers.cloudflare.com/ai/models/typesafe/jev/) provider — see [Providers](#providers). Further reading on decision-model patterns, from the author's [blog](https://clouatre.ca/blog/).
+Backed by the [TypeSafe System One](https://typesafe.ai) decision model (Jev) via [`@typesafe-ai/sdk`](https://www.npmjs.com/package/@typesafe-ai/sdk), with an opt-in [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/models/clef/) provider running Cloudflare's Clef decision model — see [Providers](#providers). Further reading on decision-model patterns, from the author's [blog](https://clouatre.ca/blog/).
 
 ## Get started
 
@@ -117,7 +117,7 @@ npx -y decisions-judge-mcp@1.3.0    # pinned, for supply-chain reproducibility
 - **`TYPESAFE_API_KEY`**: required for the default `typesafe-api` provider. Retry on rate limits (429) and transient errors (408/5xx) is owned by the SDK default retry policy.
 - **`JUDGE_PROVIDER`** (default `typesafe-api`): provider selector, `typesafe-api` or `cloudflare-workers-ai`; read once at startup.
 - **`CLOUDFLARE_API_TOKEN`** / **`CLOUDFLARE_ACCOUNT_ID`** (only for `cloudflare-workers-ai`): a Cloudflare token with `Account -> Workers AI -> Edit` permission, and the 32-character hex Cloudflare account id.
-- **`TYPESAFE_DEFAULT_MODEL`** (optional, `typesafe-api` provider only): overrides the pinned default model (`jev-1.14.0`) when the caller passes no `model` input. A caller `model` input always wins over the env value. The Cloudflare path's pinned default (`typesafe/jev-1.14.0`) is unaffected.
+- **`TYPESAFE_DEFAULT_MODEL`** (optional, `typesafe-api` provider only): overrides the pinned default model (`jev-1.14.0`) when the caller passes no `model` input. A caller `model` input always wins over the env value. The Cloudflare provider's default is unaffected (it runs `@cf/cloudflare/clef`).
 
 Invalid `JUDGE_PROVIDER` values, or `cloudflare-workers-ai` selected with missing Cloudflare credentials, fail fast at startup (non-zero exit naming the offending variable).
 
@@ -150,7 +150,7 @@ mcp:
 
 ## Tool reference: `judge`
 
-Inputs: `state` (object \| string \| array — the JSON application state to judge), `questions` (map of name → question spec, see below), `timeout_ms` (optional number, max 60000), `model` (optional override of the resolved model; the TypeSafe path defaults to `DEFAULT_MODEL` (`jev-1.14.0`), overridable via `TYPESAFE_DEFAULT_MODEL` — see [Configuration](#configuration); the Cloudflare path defaults to `typesafe/jev`), and `images` (optional map of asset name → local image file path, see below).
+Inputs: `state` (object \| string \| array — the JSON application state to judge), `questions` (map of name → question spec, see below), `timeout_ms` (optional number, max 60000), `model` (optional override of the resolved model; the TypeSafe path defaults to `DEFAULT_MODEL` (`jev-1.14.0`), overridable via `TYPESAFE_DEFAULT_MODEL` — see [Configuration](#configuration); the Cloudflare path defaults to `@cf/cloudflare/clef` and accepts `clef` or `clef-flash`), and `images` (optional map of asset name → local image file path, see below).
 
 Instructions and criteria values accept either plain strings or arbitrary JSON structure (objects/arrays). In-flight requests are cancelled when the client disconnects.
 
@@ -245,9 +245,7 @@ Fill in the state and send it to the judge tool.
 
 ## Providers
 
-Selected once at startup via `JUDGE_PROVIDER` (default `typesafe-api`); the judge tool's schema and behavior are identical under both providers. `typesafe-api` uses `@typesafe-ai/sdk` with one or more TypeSafe API keys (rotation details in [Configuration](#configuration)); `cloudflare-workers-ai` routes the same Jev model through Cloudflare Workers AI and requires the two Cloudflare variables above.
-
-Billing gotcha: `typesafe/jev` is a partner model on Cloudflare, so runs are metered from the **AI Gateway prepaid credit balance**, not the account's payment card. Accounts with a valid card but zero credit balance get HTTP 402 (error 2021, "Insufficient balance"); top up AI Gateway prepaid credit before calling.
+Selected once at startup via `JUDGE_PROVIDER` (default `typesafe-api`); the judge tool's schema and behavior are identical under both providers. `typesafe-api` uses `@typesafe-ai/sdk` with one or more TypeSafe API keys (rotation details in [Configuration](#configuration)); `cloudflare-workers-ai` runs Cloudflare's Clef decision model (default `@cf/cloudflare/clef`, a rolling alias with no version pin; a `clef` or `clef-flash` `model` override selects the same family) through Cloudflare Workers AI and requires the two Cloudflare variables above.
 
 ## Development
 

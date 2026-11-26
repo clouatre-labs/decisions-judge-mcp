@@ -10,6 +10,7 @@ import { deflateSync } from "node:zlib";
 import { spawn } from "node:child_process";
 import {
   CF_DEFAULT_MODEL,
+  cfModelSelector,
   cloudflareJudge,
   normalizeCfModel,
 } from "../providers/cloudflare-workers-ai.mjs";
@@ -42,16 +43,16 @@ function fakeResponse({ status = 200, body } = {}) {
   };
 }
 
-const COMPLETED_BODY = {
+// Mirrors the live Clef response verified in issue #160.
+const CLEF_BODY = {
   success: true,
   result: {
-    state: "Completed",
-    result: {
-      answers: { is_bug: "yes" },
-      model: "typesafe/jev",
-      usage: { prompt_tokens: 1, completion_tokens: 1 },
-    },
+    model: "clef",
+    answers: { is_bug: "yes" },
+    usage: { input_tokens: 149, output_tokens: 1 },
   },
+  errors: [],
+  messages: [],
 };
 
 const judgeArgs = {
@@ -109,42 +110,103 @@ async function runOfflineCloudflareTests() {
   process.env.CLOUDFLARE_API_TOKEN = TOKEN;
   process.env.CLOUDFLARE_ACCOUNT_ID = ACCOUNT;
   try {
-    // Happy path: well-formed Completed envelope -> success mapping.
+    // Happy path: well-formed Clef envelope -> success mapping, flat body with
+    // the selector, and the route in the URL.
     {
       let calls = 0;
       let lastBody = null;
-      globalThis.fetch = async (_url, init) => {
+      let lastUrl = null;
+      globalThis.fetch = async (url, init) => {
         calls++;
+        lastUrl = String(url);
         lastBody = JSON.parse(init?.body ?? "{}");
-        return fakeResponse({ body: COMPLETED_BODY });
+        return fakeResponse({ body: CLEF_BODY });
       };
       const out = await cloudflareJudge({ ...judgeArgs });
       if (
         out.fallback !== false ||
         out.answers?.is_bug !== "yes" ||
-        out.model !== "typesafe/jev" ||
-        out.usage?.prompt_tokens !== 1
+        out.model !== "clef" ||
+        out.usage?.input_tokens !== 149
       ) {
         fail(`cloudflare happy path: unexpected result ${JSON.stringify(out)}`);
       }
       if (calls !== 1) fail(`cloudflare happy path: expected 1 fetch call, got ${calls}`);
+      if (lastUrl !== `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/ai/run/${CF_DEFAULT_MODEL}`) {
+        fail(`cloudflare happy path: unexpected url ${lastUrl}`);
+      }
+      if (
+        JSON.stringify(lastBody) !==
+        JSON.stringify({ model: "clef", state: judgeArgs.state, questions: judgeArgs.questions })
+      ) {
+        fail(`cloudflare happy path: unexpected flat body ${JSON.stringify(lastBody)}`);
+      }
       ok("cloudflare happy path");
 
-      // Issue #121: default model pinned to typesafe/jev-1.14.0 and bare
-      // jev-* overrides prefixed with typesafe/.
-      if (lastBody?.model !== CF_DEFAULT_MODEL || CF_DEFAULT_MODEL !== "typesafe/jev-1.14.0") {
-        fail(`cloudflare model pin: request body model ${lastBody?.model}, CF_DEFAULT_MODEL ${CF_DEFAULT_MODEL}`);
+      // Issue #160: default model is @cf/cloudflare/clef; bare clef and
+      // clef-flash overrides are prefixed.
+      if (CF_DEFAULT_MODEL !== "@cf/cloudflare/clef") {
+        fail(`cloudflare model pin: CF_DEFAULT_MODEL ${CF_DEFAULT_MODEL}`);
       }
       const pinCases = [
-        [undefined, "typesafe/jev-1.14.0"],
-        ["jev-1.14.0", "typesafe/jev-1.14.0"],
-        ["typesafe/jev-1.13.0", "typesafe/jev-1.13.0"],
+        [undefined, "@cf/cloudflare/clef"],
+        ["clef", "@cf/cloudflare/clef"],
+        ["clef-flash", "@cf/cloudflare/clef-flash"],
+        ["some/other-model", "some/other-model"],
       ];
       for (const [input, want] of pinCases) {
         const got = normalizeCfModel(input);
         if (got !== want) fail(`cloudflare model pin: normalizeCfModel(${input}) = ${got}, want ${want}`);
       }
-      ok(`cloudflare model pin (${CF_DEFAULT_MODEL}, bare jev-* prefixed)`);
+      ok(`cloudflare model pin (${CF_DEFAULT_MODEL}, bare clef* prefixed)`);
+
+      // Edge case: selector only exists for prefixed Clef ids; clef-flash
+      // routes and selects as clef-flash.
+      const selectorCases = [
+        ["@cf/cloudflare/clef", "clef"],
+        ["@cf/cloudflare/clef-flash", "clef-flash"],
+        ["clef", undefined],
+        ["some/other-model", undefined],
+        [undefined, undefined],
+      ];
+      for (const [input, want] of selectorCases) {
+        const got = cfModelSelector(input);
+        if (got !== want) fail(`cloudflare selector: cfModelSelector(${input}) = ${got}, want ${want}`);
+      }
+      globalThis.fetch = async (url, init) => {
+        calls++;
+        lastUrl = String(url);
+        lastBody = JSON.parse(init?.body ?? "{}");
+        return fakeResponse({ body: { ...CLEF_BODY, result: { ...CLEF_BODY.result, model: "clef-flash" } } });
+      };
+      const flash = await cloudflareJudge({ ...judgeArgs, model: "clef-flash" });
+      if (
+        flash.model !== "clef-flash" ||
+        !lastUrl.endsWith("/ai/run/@cf/cloudflare/clef-flash") ||
+        lastBody.model !== "clef-flash"
+      ) {
+        fail(`cloudflare selector: unexpected clef-flash result ${JSON.stringify(flash)} url=${lastUrl}`);
+      }
+      ok("cloudflare selector (clef, clef-flash, undefined otherwise)");
+
+      // Edge case: a non-Clef override is passed through verbatim and sends
+      // no model key in the body.
+      globalThis.fetch = async (url, init) => {
+        calls++;
+        lastUrl = String(url);
+        lastBody = JSON.parse(init?.body ?? "{}");
+        return fakeResponse({ body: CLEF_BODY });
+      };
+      await cloudflareJudge({ ...judgeArgs, model: "some/other-model" });
+      if (
+        !lastUrl.endsWith("/ai/run/some/other-model") ||
+        "model" in lastBody ||
+        JSON.stringify(lastBody) !==
+          JSON.stringify({ state: judgeArgs.state, questions: judgeArgs.questions })
+      ) {
+        fail(`cloudflare non-Clef override: unexpected url=${lastUrl} body=${JSON.stringify(lastBody)}`);
+      }
+      ok("cloudflare non-Clef override sends no model key");
     }
 
     // Happy path: only 429 and transport errors are retried; 4xx fail fast.
@@ -153,7 +215,7 @@ async function runOfflineCloudflareTests() {
       globalThis.fetch = async () => {
         calls++;
         if (calls <= 2) return fakeResponse({ status: 429, body: { success: false, errors: [] } });
-        return fakeResponse({ body: COMPLETED_BODY });
+        return fakeResponse({ body: CLEF_BODY });
       };
       const out = await cloudflareJudge({ ...judgeArgs });
       if (out.fallback !== false || calls !== 3) {
@@ -183,7 +245,7 @@ async function runOfflineCloudflareTests() {
     }
 
     // Edge case: malformed error envelope (non-string errors[].message) and a
-    // non-Completed state both land in the fallback envelope without throwing.
+    // rejected success envelope both surface as errors rather than crashing.
     {
       globalThis.fetch = async () =>
         fakeResponse({ status: 400, body: { success: false, errors: [{ code: 1, message: 123 }] } });
@@ -198,21 +260,31 @@ async function runOfflineCloudflareTests() {
       }
       ok(`cloudflare malformed error envelope (${caught.message})`);
     }
+    // Edge case: a success envelope without success:true or with non-object
+    // answers is rejected instead of mapped to a result.
     {
-      globalThis.fetch = async () =>
-        fakeResponse({
-          body: { success: true, result: { state: "Pending", result: { answers: { is_bug: "yes" } } } },
-        });
+      globalThis.fetch = async () => fakeResponse({ body: { success: false, errors: [{ message: 'nope' }] } });
       let caught;
       try {
         await cloudflareJudge({ ...judgeArgs });
       } catch (e) {
         caught = e;
       }
-      if (!caught || !/unexpected response envelope/.test(String(caught?.message))) {
-        fail(`cloudflare non-Completed state: expected envelope rejection, got ${String(caught)}`);
+      if (!caught || !/nope/.test(String(caught?.message))) {
+        fail(`cloudflare non-success envelope: expected envelope rejection, got ${String(caught)}`);
       }
-      ok("cloudflare non-Completed state rejected");
+      globalThis.fetch = async () =>
+        fakeResponse({ body: { success: true, result: { model: "clef", answers: ["yes"] } } });
+      let caught2;
+      try {
+        await cloudflareJudge({ ...judgeArgs });
+      } catch (e) {
+        caught2 = e;
+      }
+      if (!caught2 || !/unexpected response envelope/.test(String(caught2?.message))) {
+        fail(`cloudflare non-object answers: expected envelope rejection, got ${String(caught2)}`);
+      }
+      ok("cloudflare envelope without success:true or object answers rejected");
     }
 
     // Edge case: caller abort between attempts rejects promptly and never
@@ -275,7 +347,7 @@ async function runOfflineCloudflareTests() {
       let calls = 0;
       globalThis.fetch = async () => {
         calls++;
-        return fakeResponse({ body: COMPLETED_BODY });
+        return fakeResponse({ body: CLEF_BODY });
       };
       let caught;
       try {
