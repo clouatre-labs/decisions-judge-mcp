@@ -51,6 +51,8 @@ Two hand copies with no drift guard is the only verified defect in the integrati
 
 No version pin, no `box`, 5.7x Jev's price per Mtok; the provider is pinned to `typesafe/jev-1.14.0` by #121. Judge: switch 0.23 (first pass 0.75 without pricing facts), skip 0.74. clef-flash is reachable later through the `model` override with a two-line change (send the required `input.model`). **Action**: none.
 
+*Follow-up, 2026-11-25:* superseded the same day. Every `typesafe/jev*` route on Workers AI returned `400` code 7000 "No route for that URI" and the model page redirected to the catalog as unavailable; the removal is undocumented and is not on Cloudflare's November 20 deprecation list (which fails with `410` code 5028). With no Jev route left, the provider was repointed at Clef (#160, #161, v1.9.0). The verdict above assumed a live Jev route; its pricing and pinning caveats still stand.
+
 ### 4. x402 in the stdio server: skip (CONFIRMED)
 
 Judge: 0.17. Payment belongs to the hosted path, which exists. **Action**: none.
