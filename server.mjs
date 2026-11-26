@@ -35,6 +35,7 @@ import {
   loadImagesFromPaths,
   typesafeJudge,
   validateImages,
+  validateQuestions,
 } from "./providers/typesafe-api.mjs";
 
 // Startup provider selection: JUDGE_PROVIDER is read exactly once, at server
@@ -102,7 +103,7 @@ const inputSchema = z.object({
     .record(z.string().min(1), z.string().min(1))
     .optional()
     .describe(
-      'Optional map of asset name to local PNG/JPEG file path (256-1568 px, max 16 MiB); path must be accessible from the server filesystem. Reference as <name> in noul/choice instructions. Preview, typesafe-api provider only.',
+      'Optional map of asset name to local PNG/JPEG file path (256-1568 px, max 16 MiB); path must be accessible from the server filesystem. Reference as <name> in noul/choice instructions (both providers; at most 4 images per request on cloudflare-workers-ai).',
     ),
 });
 
@@ -146,11 +147,6 @@ function stripProtoKeys(value) {
 // Payload size cap: {state, questions} serialized must stay within 256 KiB.
 const MAX_PAYLOAD_BYTES = 262144;
 
-// String-state parsing (issue #120): replay-measured 2026-11-16 across noul
-// and score calls; answer deltas parsed-vs-unparsed were not material, so the
-// parsing is intentionally NOT shipped. JSON-encoded string state is forwarded
-// verbatim. See the measurement recorded on issue #120.
-
 // Provider dispatch: sanitize inputs, enforce the payload cap, then hand off.
 // Every error lands in the fallback envelope.
 async function judgeHandler({ state, questions, images, timeout_ms, model }, ctx) {
@@ -172,38 +168,39 @@ async function judgeHandler({ state, questions, images, timeout_ms, model }, ctx
   } catch (err) {
     return fallbackEnvelope(err && err.message ? err.message : "image loading failed");
   }
-  // Question specs are validated exactly once, inside typesafeJudge via
-  // buildQuestion (providers/typesafe-api.mjs); per-spec hints flow through
-  // fallbackFrom into the envelope. Schema-layer fix hints (missing type,
-  // unknown keys, array questions, cardinality limits) fire in zod above.
+  // Specs are validated exactly once per call here, so both providers return
+  // the same fix-hint fallback and no request is sent for a malformed spec.
+  const invalid = validateQuestions(cleanQuestions);
+  if (invalid) return fallbackEnvelope(invalid);
   // Serialize once and measure UTF-8 bytes (Buffer.byteLength), not UTF-16
   // code units, so non-ASCII payloads cannot slip past the cap.
   const serialized = JSON.stringify({ state: cleanState, questions: cleanQuestions });
   if (Buffer.byteLength(serialized, "utf8") > MAX_PAYLOAD_BYTES) {
     return fallbackEnvelope("payload exceeds 256 KiB limit");
   }
-  const dispatch =
-    provider === "cloudflare-workers-ai"
-      ? async (args, c) => {
-          try {
-            const payload = await cloudflareJudge({
-              state: args.state,
-              questions: args.questions,
-              images: args.images,
-              model: args.model,
-              timeout_ms: args.timeout_ms,
-              signal: c?.signal,
-            });
-            return envelope(payload);
-          } catch (err) {
-            return fallbackFrom(err, "cloudflare request failed");
-          }
-        }
-      : typesafeJudge;
+  const dispatch = provider === "cloudflare-workers-ai" ? cloudflareDispatch : typesafeJudge;
   return dispatch(
     { state: cleanState, questions: cleanQuestions, images: encodedImages, timeout_ms, model },
     ctx,
   );
+}
+
+// Cloudflare path: flat {state, questions} body via cloudflareJudge. Any
+// failure lands in the fallback envelope.
+async function cloudflareDispatch(args, ctx) {
+  try {
+    const payload = await cloudflareJudge({
+      state: args.state,
+      questions: args.questions,
+      images: args.images,
+      model: args.model,
+      timeout_ms: args.timeout_ms,
+      signal: ctx?.signal,
+    });
+    return envelope(payload);
+  } catch (err) {
+    return fallbackFrom(err, "cloudflare request failed");
+  }
 }
 
 // Build the McpServer with the judge tool registered.
