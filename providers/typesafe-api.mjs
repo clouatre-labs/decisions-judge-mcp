@@ -97,6 +97,20 @@ export function validateQuestionSpec(spec, name) {
   }
 }
 
+// Validates every question spec once, before provider dispatch, so both
+// providers return the same fix-hint fallback. Returns the first error's
+// message, or null when all specs are well formed.
+export function validateQuestions(questions) {
+  for (const [name, spec] of Object.entries(questions ?? {})) {
+    try {
+      validateQuestionSpec(spec, name);
+    } catch (err) {
+      return err && err.message ? err.message : "question validation failed";
+    }
+  }
+  return null;
+}
+
 // Image asset limits (TypeSafe images API): PNG/JPEG only, 256-1568 px per
 // side, 16 MiB per file. Enforced by loadImagesFromPaths before any request.
 const IMAGE_MAX_BYTES = 16 * 1024 * 1024;
@@ -233,8 +247,8 @@ export function loadImagesFromPaths(images) {
   return out;
 }
 
+// Pure builder: specs are validated upstream by validateQuestions.
 function buildQuestion(spec, name) {
-  validateQuestionSpec(spec, name);
   if (spec.type === "choice") {
     return choice(spec.instructions, spec.criteria);
   }
@@ -244,11 +258,9 @@ function buildQuestion(spec, name) {
   return noul(spec.instructions, spec.criteria);
 }
 
-// Typesafe path (default): validateQuestionSpec (via buildQuestion) guards the
-// question specs, then the SDK question objects are constructed. When images
-// are present, assets are built from the names actually referenced by
-// noul/choice instructions and the danger-zone header is sent. Any failure
-// lands in the fallback envelope.
+// Typesafe path (default): builds the SDK question objects from specs that
+// judgeHandler already validated. Every provided image becomes an asset and
+// triggers the danger-zone header. Any failure lands in the fallback envelope.
 export async function typesafeJudge({ state, questions, images, timeout_ms, model }, ctx) {
   let qmap;
   try {
@@ -260,18 +272,10 @@ export async function typesafeJudge({ state, questions, images, timeout_ms, mode
   }
   const request = { state, questions: qmap, model: model ?? DEFAULT_MODEL };
   const imageNames = images && typeof images === "object" ? Object.keys(images) : [];
-  const referenced = new Set();
-  for (const spec of Object.values(questions)) {
-    if (spec?.type !== "noul" && spec?.type !== "choice") continue;
-    if (typeof spec.instructions !== "string") continue;
-    for (const match of spec.instructions.matchAll(/<([^<>"\s]+)>/g)) {
-      if (imageNames.includes(match[1])) referenced.add(match[1]);
-    }
-  }
-  if (referenced.size > 0) {
+  if (imageNames.length > 0) {
     try {
       request.assets = Object.fromEntries(
-        [...referenced].map((name) => [name, Image.fromBase64(images[name])]),
+        imageNames.map((name) => [name, Image.fromBase64(images[name])]),
       );
     } catch (err) {
       return fallbackFrom(err, "image decoding failed");
@@ -285,7 +289,7 @@ export async function typesafeJudge({ state, questions, images, timeout_ms, mode
       [ctx?.signal, timeout_ms ? AbortSignal.timeout(timeout_ms) : undefined].filter(Boolean),
     ),
   };
-  if (referenced.size > 0) {
+  if (imageNames.length > 0) {
     // Required by the API for any request carrying image assets.
     options.headers = { "TypeSafe-Danger-Zone-Images": "true" };
   }

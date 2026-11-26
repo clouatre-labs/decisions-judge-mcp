@@ -19,6 +19,7 @@ import {
   loadImagesFromPaths,
   typesafeJudge,
   validateImages,
+  validateQuestions,
 } from "../providers/typesafe-api.mjs";
 
 const TIMEOUT_MS = 10_000;
@@ -609,6 +610,33 @@ async function runOfflineTypesafeTests() {
       ok("typesafe image happy path (assets, danger-zone header, typed answer)");
     }
 
+    // Happy path: validateQuestions returns the fix-hint message (not a
+    // throw) for a choice question without criteria, naming the question.
+    const choiceMsg = validateQuestions({ q: { type: "choice", instructions: "pick" } });
+    if (
+      typeof choiceMsg !== "string" ||
+      !choiceMsg.startsWith('questions.q: choice question requires "criteria"') ||
+      choiceMsg.includes("pick")
+    ) {
+      fail(`validateQuestions criteria-less choice: unexpected ${JSON.stringify(choiceMsg)}`);
+    }
+    ok("validateQuestions: criteria-less choice returns questions.q hint");
+
+    // Edge case: a score question whose criteria is not an array of >= 2.
+    const scoreMsg = validateQuestions({
+      rating: { type: "score", instructions: "rate", criteria: { a: 1 } },
+    });
+    if (
+      typeof scoreMsg !== "string" ||
+      !scoreMsg.startsWith('questions.rating: score question requires "criteria"')
+    ) {
+      fail(`validateQuestions malformed score: unexpected ${JSON.stringify(scoreMsg)}`);
+    }
+    if (validateQuestions({ rating: { type: "score", instructions: "rate", criteria: ["low", "high"] } }) !== null) {
+      fail("validateQuestions: well-formed score should return null");
+    }
+    ok("validateQuestions: malformed score rejected, well-formed score returns null");
+
     // Edge cases (issue #142): validateImages rejections -- score over
     // images, box over images, and an image no noul/choice question
     // references. Each must throw a clear error before any request.
@@ -734,29 +762,6 @@ function runEnvModelOverrideTest() {
   });
 }
 
-// Issue #122: exactly one validateQuestionSpec call site (inside buildQuestion
-// in providers/typesafe-api.mjs); the judgeHandler loop in server.mjs is gone.
-function assertSingleValidationSite() {
-  const server = readFileSync(new URL("../server.mjs", import.meta.url), "utf8");
-  const provider = readFileSync(
-    new URL("../providers/typesafe-api.mjs", import.meta.url),
-    "utf8",
-  );
-  const serverCalls = (server.match(/validateQuestionSpec\(/g) ?? []).length;
-  if (serverCalls !== 0) {
-    fail(`validateQuestionSpec: expected 0 occurrences in server.mjs, got ${serverCalls}`);
-  }
-  const providerMatches = provider.match(/validateQuestionSpec\(/g) ?? [];
-  // One definition + exactly one call site.
-  if (providerMatches.length !== 2) {
-    fail(`validateQuestionSpec: expected definition + 1 call in typesafe-api.mjs, got ${providerMatches.length}`);
-  }
-  if (!/function validateQuestionSpec\(/.test(provider)) {
-    fail("validateQuestionSpec definition missing in typesafe-api.mjs");
-  }
-  ok("exactly one validateQuestionSpec call site");
-}
-
 // Startup-failure assertions: spawn node server.mjs with a controlled env and
 // require a non-zero exit with the offending variable named on stderr.
 function runStartupFailureCase(label, envOverrides, expectPattern) {
@@ -801,59 +806,143 @@ function runStartupFailureCase(label, envOverrides, expectPattern) {
 // Issue #121: with serveStdio, a client whose opening message carries a valid
 // 2026-07-28 per-request envelope gets pinned to the modern era, where the
 // modern-only server/discover handler is answered.
-function runStdioDiscoverTest() {
-  const env = { ...process.env };
-  delete env.JUDGE_PROVIDER;
-  delete env.TYPESAFE_API_KEY;
-  const proc = spawn(process.execPath, ["server.mjs"], {
-    stdio: ["pipe", "pipe", "inherit"],
-    env,
-  });
-  function stdioFail(msg) {
-    console.error(`smoke-judge: FAIL: ${msg}`);
-    proc.kill("SIGKILL");
-    process.exit(1);
-  }
-  function send(msg) {
-    proc.stdin.write(JSON.stringify(msg) + "\n");
-  }
-  let buffer = "";
-  proc.stdout.on("data", (chunk) => {
-    buffer += chunk;
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      let msg;
-      try {
-        msg = JSON.parse(line);
-      } catch {
-        stdioFail(`non-JSON output on stdout: ${line.slice(0, 200)}`);
-      }
-      if (msg.id === 1) {
-        if (msg.error || typeof msg.result !== "object") {
-          stdioFail(`server/discover failed: ${JSON.stringify(msg).slice(0, 300)}`);
-        }
-        ok(`server/discover served on modern era (${JSON.stringify(msg.result).slice(0, 160)})`);
-        proc.kill("SIGKILL");
-      }
-    }
-  });
-  const timer = setTimeout(() => stdioFail("server/discover test timed out"), TIMEOUT_MS);
-  proc.on("exit", () => clearTimeout(timer));
-  proc.on("error", (err) => stdioFail(`failed to spawn server: ${err.message}`));
-  send({
-    jsonrpc: "2.0",
-    id: 1,
-    method: "server/discover",
-    params: {
-      // 2026-07-28 per-request envelope: the opening message's valid modern
-      // envelope claim is what pins the connection to the modern era.
-      _meta: {
-        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-        "io.modelcontextprotocol/clientCapabilities": {},
+async function runCloudflareSpecRejectionCase() {
+  return new Promise((resolve) => {
+    const env = { ...process.env };
+    delete env.TYPESAFE_API_KEY;
+    const child = spawn(process.execPath, ["server.mjs"], {
+      stdio: ["pipe", "pipe", "inherit"],
+      env: {
+        ...env,
+        JUDGE_PROVIDER: "cloudflare-workers-ai",
+        CLOUDFLARE_API_TOKEN: "dummy-token",
+        CLOUDFLARE_ACCOUNT_ID: "a".repeat(32),
       },
-    },
+    });
+    const send = (msg) => child.stdin.write(JSON.stringify(msg) + "\n");
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      fail(`cloudflare spec rejection: no response within ${TIMEOUT_MS}ms`);
+    }, TIMEOUT_MS);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      fail(`cloudflare spec rejection: failed to spawn server: ${err.message}`);
+    });
+    let buffer = "";
+    child.stdout.on("data", (chunk) => {
+      buffer += chunk;
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let msg;
+        try {
+          msg = JSON.parse(line);
+        } catch {
+          fail(`cloudflare spec rejection: non-JSON output on stdout: ${line.slice(0, 200)}`);
+        }
+        if (msg.id === 1) {
+          // Arrange: criteria-less choice on the cloudflare provider. No fetch
+          // stub exists here, so a real request would fail differently.
+          send({
+            jsonrpc: "2.0",
+            id: 2,
+            method: "tools/call",
+            params: {
+              name: "judge",
+              arguments: { state: {}, questions: { q: { type: "choice", instructions: "pick" } } },
+            },
+          });
+        } else if (msg.id === 2) {
+          clearTimeout(timer);
+          const text = msg.result?.content?.[0]?.text;
+          // Assert: rejected before dispatch with the shared fix hint.
+          if (msg.result?.isError !== true) {
+            fail(`cloudflare spec rejection: expected isError === true, got: ${JSON.stringify(msg).slice(0, 300)}`);
+          }
+          const error = text ? JSON.parse(text).error : null;
+          if (!error?.startsWith('questions.q: choice question requires "criteria"')) {
+            fail(`cloudflare spec rejection: expected criteria hint, got: ${String(text).slice(0, 200)}`);
+          }
+          ok(`cloudflare provider rejects criteria-less choice before fetch: ${String(error).slice(0, 120)}`);
+          child.kill("SIGKILL");
+          resolve();
+        }
+      }
+    });
+    send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: "smoke-judge", version: "0.0.0" },
+      },
+    });
+  });
+}
+
+// Resolves once the discover response is verified.
+function runStdioDiscoverTest() {
+  return new Promise((resolve, reject) => {
+    const env = { ...process.env };
+    delete env.JUDGE_PROVIDER;
+    delete env.TYPESAFE_API_KEY;
+    const proc = spawn(process.execPath, ["server.mjs"], {
+      stdio: ["pipe", "pipe", "inherit"],
+      env,
+    });
+    function stdioFail(msg) {
+      console.error(`smoke-judge: FAIL: ${msg}`);
+      proc.kill("SIGKILL");
+      process.exit(1);
+    }
+    function send(msg) {
+      proc.stdin.write(JSON.stringify(msg) + "\n");
+    }
+    let buffer = "";
+    proc.stdout.on("data", (chunk) => {
+      buffer += chunk;
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let msg;
+        try {
+          msg = JSON.parse(line);
+        } catch {
+          stdioFail(`non-JSON output on stdout: ${line.slice(0, 200)}`);
+        }
+        if (msg.id === 1) {
+          if (msg.error || typeof msg.result !== "object") {
+            stdioFail(`server/discover failed: ${JSON.stringify(msg).slice(0, 300)}`);
+          }
+          ok(`server/discover served on modern era (${JSON.stringify(msg.result).slice(0, 160)})`);
+          proc.kill("SIGKILL");
+          resolve();
+        }
+      }
+    });
+    const timer = setTimeout(() => {
+      proc.kill("SIGKILL");
+      reject(new Error("server/discover test timed out"));
+    }, TIMEOUT_MS);
+    proc.on("exit", () => clearTimeout(timer));
+    proc.on("error", (err) => reject(new Error(`failed to spawn server: ${err.message}`)));
+    send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "server/discover",
+      params: {
+        // 2026-07-28 per-request envelope: the opening message's valid modern
+        // envelope claim is what pins the connection to the modern era.
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+          "io.modelcontextprotocol/clientCapabilities": {},
+        },
+      },
+    });
   });
 }
 
@@ -1248,8 +1337,8 @@ async function runLiveImageSmokeTest() {
 await runOfflineCloudflareTests();
 
 await runOfflineTypesafeTests();
-assertSingleValidationSite();
 await runEnvModelOverrideTest();
+await runCloudflareSpecRejectionCase();
 await runStartupFailureCase(
   "missing CLOUDFLARE_API_TOKEN",
   { JUDGE_PROVIDER: "cloudflare-workers-ai" },
@@ -1272,6 +1361,6 @@ await runStartupFailureCase(
   /JUDGE_PROVIDER must be one of: typesafe-api, cloudflare-workers-ai/,
 );
 
-runStdioDiscoverTest();
+await runStdioDiscoverTest();
 await runLiveImageSmokeTest();
-setTimeout(() => runStdioDefaultPathTest(), 500);
+await runStdioDefaultPathTest();
