@@ -101,6 +101,17 @@ const bad = await request("tools/call", {
 });
 if (!bad.result?.isError) fail("invalid input did not produce a tool error");
 
+// Assert: the "decisions-judge-mcp/schema" subpath exports the shared
+// question specs and keeps their caller-visible fix hints.
+const schema = await import("../schema.mjs");
+for (const name of ["entryType", "questionSpec", "questionsSchema"]) {
+  if (!schema[name]) fail(`schema subpath does not export ${name}`);
+}
+const missingType = schema.questionsSchema.safeParse({ a: { instructions: "x" } });
+if (missingType.success || !missingType.error.issues[0].message.includes('missing "type"')) {
+  fail("schema subpath lost the missing-type fix hint");
+}
+
 // Assert: graceful shutdown (close stdin; serveStdio exits when stdin ends).
 // Wait for the child to exit so it flushes V8 coverage before we do.
 proc.stdin.end();
