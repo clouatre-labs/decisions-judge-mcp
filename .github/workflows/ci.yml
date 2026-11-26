@@ -40,15 +40,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Syntax check server
-        run: node --check server.mjs
-
-      - name: Smoke test MCP stdio handshake
-        run: node scripts/smoke.mjs
-
-      - name: Smoke test judge fallback envelope
-        run: node scripts/smoke-judge.mjs
-
       - name: Line coverage gate (c8, >=80%)
         run: npm run test:coverage
 

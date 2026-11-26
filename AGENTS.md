@@ -9,8 +9,8 @@ decisions-judge-mcp is an MCP stdio server (Node >= 22, ESM) exposing one `judge
 npm on Node >= 22 (CI runs Node 26); MCP SDK + zod for schema validation.
 
 ```sh
-# test:   node --check server.mjs && node scripts/smoke.mjs && node scripts/smoke-judge.mjs
-# coverage: npm run test:coverage   # c8, >= 80% lines, runs the three smoke scripts
+# test:   npm test   # node --check server.mjs + smoke.mjs, smoke-judge.mjs, smoke-server.mjs
+# coverage: npm run test:coverage   # c8, >= 80% lines, wraps npm test
 # lint:   npx markdownlint-cli2 "**/*.md"
 # format: npx markdownlint-cli2 --fix "**/*.md"
 ```

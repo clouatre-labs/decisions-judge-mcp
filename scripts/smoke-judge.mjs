@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { spawn } from "node:child_process";
+import { startServer } from "./lib/stdio-client.mjs";
 import {
   CF_DEFAULT_MODEL,
   cloudflareJudge,
@@ -415,11 +416,9 @@ async function runOfflineCloudflareTests() {
 // three times per judge call.
 async function runOfflineTypesafeTests() {
   const savedEnv = {};
-  for (const name of Object.keys(process.env)) {
-    if (/^TYPESAFE_API_KEY$/.test(name)) {
-      savedEnv[name] = process.env[name];
-      delete process.env[name];
-    }
+  if ("TYPESAFE_API_KEY" in process.env) {
+    savedEnv.TYPESAFE_API_KEY = process.env.TYPESAFE_API_KEY;
+    delete process.env.TYPESAFE_API_KEY;
   }
   const savedFetch = globalThis.fetch;
   const json = (body, status) =>
@@ -715,10 +714,8 @@ async function runOfflineTypesafeTests() {
     }
   } finally {
     globalThis.fetch = savedFetch;
-    for (const name of Object.keys(process.env)) {
-      if (/^TYPESAFE_API_KEY$/.test(name)) delete process.env[name];
-    }
-    for (const [name, value] of Object.entries(savedEnv)) process.env[name] = value;
+    delete process.env.TYPESAFE_API_KEY;
+    Object.assign(process.env, savedEnv);
   }
 }
 
@@ -802,497 +799,296 @@ function runStartupFailureCase(label, envOverrides, expectPattern) {
     });
   });
 }
-
 // Issue #121: with serveStdio, a client whose opening message carries a valid
 // 2026-07-28 per-request envelope gets pinned to the modern era, where the
 // modern-only server/discover handler is answered.
 async function runCloudflareSpecRejectionCase() {
-  return new Promise((resolve) => {
-    const env = { ...process.env };
-    delete env.TYPESAFE_API_KEY;
-    const child = spawn(process.execPath, ["server.mjs"], {
-      stdio: ["pipe", "pipe", "inherit"],
-      env: {
-        ...env,
-        JUDGE_PROVIDER: "cloudflare-workers-ai",
-        CLOUDFLARE_API_TOKEN: "dummy-token",
-        CLOUDFLARE_ACCOUNT_ID: "a".repeat(32),
-      },
-    });
-    const send = (msg) => child.stdin.write(JSON.stringify(msg) + "\n");
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      fail(`cloudflare spec rejection: no response within ${TIMEOUT_MS}ms`);
-    }, TIMEOUT_MS);
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      fail(`cloudflare spec rejection: failed to spawn server: ${err.message}`);
-    });
-    let buffer = "";
-    child.stdout.on("data", (chunk) => {
-      buffer += chunk;
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let msg;
-        try {
-          msg = JSON.parse(line);
-        } catch {
-          fail(`cloudflare spec rejection: non-JSON output on stdout: ${line.slice(0, 200)}`);
-        }
-        if (msg.id === 1) {
-          // Arrange: criteria-less choice on the cloudflare provider. No fetch
-          // stub exists here, so a real request would fail differently.
-          send({
-            jsonrpc: "2.0",
-            id: 2,
-            method: "tools/call",
-            params: {
-              name: "judge",
-              arguments: { state: {}, questions: { q: { type: "choice", instructions: "pick" } } },
-            },
-          });
-        } else if (msg.id === 2) {
-          clearTimeout(timer);
-          const text = msg.result?.content?.[0]?.text;
-          // Assert: rejected before dispatch with the shared fix hint.
-          if (msg.result?.isError !== true) {
-            fail(`cloudflare spec rejection: expected isError === true, got: ${JSON.stringify(msg).slice(0, 300)}`);
-          }
-          const error = text ? JSON.parse(text).error : null;
-          if (!error?.startsWith('questions.q: choice question requires "criteria"')) {
-            fail(`cloudflare spec rejection: expected criteria hint, got: ${String(text).slice(0, 200)}`);
-          }
-          ok(`cloudflare provider rejects criteria-less choice before fetch: ${String(error).slice(0, 120)}`);
-          child.kill("SIGKILL");
-          resolve();
-        }
-      }
-    });
-    send({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: "2025-11-25",
-        capabilities: {},
-        clientInfo: { name: "smoke-judge", version: "0.0.0" },
-      },
-    });
+  const env = { ...process.env };
+  delete env.TYPESAFE_API_KEY;
+  const client = await startServer({
+    env: {
+      ...env,
+      JUDGE_PROVIDER: "cloudflare-workers-ai",
+      CLOUDFLARE_API_TOKEN: "dummy-token",
+      CLOUDFLARE_ACCOUNT_ID: "a".repeat(32),
+    },
   });
+  function stdioFail(msg) {
+    client.child.kill("SIGKILL");
+    fail(`cloudflare spec rejection: ${msg}`);
+  }
+
+  await client.request("initialize", {
+    protocolVersion: "2025-11-25",
+    capabilities: {},
+    clientInfo: { name: "smoke-judge", version: "0.0.0" },
+  });
+
+  // Act: criteria-less choice on the cloudflare provider. No fetch stub
+  // exists here, so a real request would fail differently.
+  const msg = await client.request("tools/call", {
+    name: "judge",
+    arguments: { state: {}, questions: { q: { type: "choice", instructions: "pick" } } },
+  });
+  const text = msg.result?.content?.[0]?.text;
+  // Assert: rejected before dispatch with the shared fix hint.
+  if (msg.result?.isError !== true) {
+    stdioFail(`expected isError === true, got: ${JSON.stringify(msg).slice(0, 300)}`);
+  }
+  const error = text ? JSON.parse(text).error : null;
+  if (!error?.startsWith('questions.q: choice question requires "criteria"')) {
+    stdioFail(`expected criteria hint, got: ${String(text).slice(0, 200)}`);
+  }
+  ok(`cloudflare provider rejects criteria-less choice before fetch: ${String(error).slice(0, 120)}`);
+  const exitCode = await client.close();
+  if (exitCode !== 0) stdioFail(`server exited with code ${exitCode}`);
 }
 
 // Resolves once the discover response is verified.
-function runStdioDiscoverTest() {
-  return new Promise((resolve, reject) => {
-    const env = { ...process.env };
-    delete env.JUDGE_PROVIDER;
-    delete env.TYPESAFE_API_KEY;
-    const proc = spawn(process.execPath, ["server.mjs"], {
-      stdio: ["pipe", "pipe", "inherit"],
-      env,
-    });
-    function stdioFail(msg) {
-      console.error(`smoke-judge: FAIL: ${msg}`);
-      proc.kill("SIGKILL");
-      process.exit(1);
-    }
-    function send(msg) {
-      proc.stdin.write(JSON.stringify(msg) + "\n");
-    }
-    let buffer = "";
-    proc.stdout.on("data", (chunk) => {
-      buffer += chunk;
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let msg;
-        try {
-          msg = JSON.parse(line);
-        } catch {
-          stdioFail(`non-JSON output on stdout: ${line.slice(0, 200)}`);
-        }
-        if (msg.id === 1) {
-          if (msg.error || typeof msg.result !== "object") {
-            stdioFail(`server/discover failed: ${JSON.stringify(msg).slice(0, 300)}`);
-          }
-          ok(`server/discover served on modern era (${JSON.stringify(msg.result).slice(0, 160)})`);
-          proc.kill("SIGKILL");
-          resolve();
-        }
-      }
-    });
-    const timer = setTimeout(() => {
-      proc.kill("SIGKILL");
-      reject(new Error("server/discover test timed out"));
-    }, TIMEOUT_MS);
-    proc.on("exit", () => clearTimeout(timer));
-    proc.on("error", (err) => reject(new Error(`failed to spawn server: ${err.message}`)));
-    send({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "server/discover",
-      params: {
-        // 2026-07-28 per-request envelope: the opening message's valid modern
-        // envelope claim is what pins the connection to the modern era.
-        _meta: {
-          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-          "io.modelcontextprotocol/clientCapabilities": {},
-        },
-      },
-    });
+async function runStdioDiscoverTest() {
+  const env = { ...process.env };
+  delete env.JUDGE_PROVIDER;
+  delete env.TYPESAFE_API_KEY;
+  const client = await startServer({ env });
+  function stdioFail(msg) {
+    client.child.kill("SIGKILL");
+    fail(msg);
+  }
+
+  const msg = await client.request("server/discover", {
+    // 2026-07-28 per-request envelope: the opening message's valid modern
+    // envelope claim is what pins the connection to the modern era.
+    _meta: {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {},
+    },
   });
+  if (msg.error || typeof msg.result !== "object") {
+    stdioFail(`server/discover failed: ${JSON.stringify(msg).slice(0, 300)}`);
+  }
+  ok(`server/discover served on modern era (${JSON.stringify(msg.result).slice(0, 160)})`);
+  const exitCode = await client.close();
+  if (exitCode !== 0) stdioFail(`server exited with code ${exitCode}`);
 }
 
 // Stdio smoke: with JUDGE_PROVIDER unset, the judge path behaves exactly as on
 // main -- fallback envelope for a malformed question, widened inputs accepted.
-function runStdioDefaultPathTest() {
+async function runStdioDefaultPathTest() {
   const env = { ...process.env };
   delete env.CLOUDFLARE_API_TOKEN;
   delete env.CLOUDFLARE_ACCOUNT_ID;
   delete env.JUDGE_PROVIDER;
   delete env.TYPESAFE_API_KEY;
-  const proc = spawn(process.execPath, ["server.mjs"], {
-    stdio: ["pipe", "pipe", "inherit"],
-    env,
-  });
-
+  const client = await startServer({ env });
   function stdioFail(msg) {
-    console.error(`smoke-judge: FAIL: ${msg}`);
-    proc.kill("SIGKILL");
-    process.exit(1);
+    client.child.kill("SIGKILL");
+    fail(msg);
   }
+  const judge = (arguments_) =>
+    client.request("tools/call", { name: "judge", arguments: arguments_ });
+  const contentText = (msg) =>
+    msg.result?.content?.[0]?.text ?? stdioFail(`tools/call result missing content: ${JSON.stringify(msg).slice(0, 300)}`);
 
-  function send(msg) {
-    proc.stdin.write(JSON.stringify(msg) + "\n");
-  }
-
-  let buffer = "";
-  proc.stdout.on("data", (chunk) => {
-    buffer += chunk;
-    // MCP stdio framing: newline-delimited JSON messages.
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      let msg;
-      try {
-        msg = JSON.parse(line);
-      } catch {
-        stdioFail(`non-JSON output on stdout: ${line.slice(0, 200)}`);
-      }
-      if (msg.id === 1) {
-        if (!msg.result || !msg.result.protocolVersion) {
-          stdioFail(`initialize failed: ${JSON.stringify(msg).slice(0, 300)}`);
-        }
-        // Arrange: choice question with no criteria must fail construction.
-        send({
-          jsonrpc: "2.0",
-          id: 2,
-          method: "tools/call",
-          params: {
-            name: "judge",
-            arguments: {
-              state: {},
-              questions: { q: { type: "choice", instructions: "pick one" } },
-            },
-          },
-        });
-      } else if (msg.id === 2) {
-        clearTimeout(timer);
-        const text = msg.result?.content?.[0]?.text;
-        if (!text) {
-          stdioFail(`tools/call result missing content: ${JSON.stringify(msg).slice(0, 300)}`);
-        }
-        let payload;
-        try {
-          payload = JSON.parse(text);
-        } catch {
-          stdioFail(`content is not a JSON payload: ${String(text).slice(0, 200)}`);
-        }
-        // Assert: fallback envelope with an error about choice criteria.
-        if (payload.fallback !== true) {
-          stdioFail(`expected fallback === true, got: ${text.slice(0, 200)}`);
-        }
-        if (!payload.error || !/criteria/i.test(payload.error) || !/questions\.q:/.test(payload.error)) {
-          stdioFail(`expected criteria error, got: ${text.slice(0, 200)}`);
-        }
-        ok(`default path fallback envelope: ${payload.error}`);
-        // Arrange: widened schema acceptance -- structured (object) instructions,
-        // a JSON criteria value, array state, and a model override. Offline the
-        // call falls back, but the input must NOT be rejected by zod.
-        send({
-          jsonrpc: "2.0",
-          id: 3,
-          method: "tools/call",
-          params: {
-            name: "judge",
-            arguments: {
-              state: ["alpha", { beta: true }],
-              model: "jev-latest",
-              questions: {
-                q: {
-                  type: "noul",
-                  instructions: { text: "is the feature healthy?", locale: "en" },
-                  criteria: { true: { detail: "yes" }, false: "no" },
-                },
-              },
-            },
-          },
-        });
-        timer = setTimeout(
-          () => stdioFail(`no response within ${TIMEOUT_MS}ms`),
-          TIMEOUT_MS,
-        );
-      } else if (msg.id === 3) {
-        clearTimeout(timer);
-        const text3 = msg.result?.content?.[0]?.text;
-        if (!text3) {
-          stdioFail(`tools/call result missing content: ${JSON.stringify(msg).slice(0, 300)}`);
-        }
-        if (msg.error || /input validation|invalid_input|Invalid arguments/i.test(text3)) {
-          stdioFail(`widened input rejected by schema: ${JSON.stringify(msg).slice(0, 300)}`);
-        }
-        let payload3;
-        try {
-          payload3 = JSON.parse(text3);
-        } catch {
-          stdioFail(`content is not a JSON payload: ${String(text3).slice(0, 200)}`);
-        }
-        if (typeof payload3.fallback !== "boolean") {
-          stdioFail(`expected fallback boolean, got: ${text3.slice(0, 200)}`);
-        }
-        if (payload3.error && /criteria/i.test(payload3.error)) {
-          stdioFail(`unexpected criteria error for structured input: ${text3.slice(0, 200)}`);
-        }
-        ok(`widened inputs accepted, fallback=${payload3.fallback}`);
-        // Regression (issue #90): omitted `type` must be rejected with
-        // INVALID_PARAMS, not silently defaulted to noul.
-        send({
-          jsonrpc: "2.0",
-          id: 4,
-          method: "tools/call",
-          params: {
-            name: "judge",
-            arguments: {
-              state: {},
-              questions: { q: { instructions: "Is this a defect?" } },
-            },
-          },
-        });
-      } else if (msg.id === 4) {
-        clearTimeout(timer);
-        const text4 = msg.result?.content?.[0]?.text;
-        if (!msg.result?.isError || !text4) {
-          stdioFail(`expected INVALID_PARAMS for omitted type, got: ${JSON.stringify(msg).slice(0, 300)}`);
-        }
-        if (!/missing "type" \(noul\|choice\|score\)/.test(text4) || !/questions\.q/.test(text4)) {
-          stdioFail(`expected error naming "type", got: ${text4}`);
-        }
-        ok(`omitted type rejected: ${text4.slice(0, 120)}`);
-        // Regression (issue #90): unknown keys must be rejected, not stripped.
-        send({
-          jsonrpc: "2.0",
-          id: 5,
-          method: "tools/call",
-          params: {
-            name: "judge",
-            arguments: {
-              // Secret state value: the hint must never echo caller content.
-              state: { secret: "hunter2" },
-              questions: {
-                q: { choice: true, criteria: { confirm: "yes", demote: "no" } },
-              },
-            },
-          },
-        });
-      } else if (msg.id === 5) {
-        clearTimeout(timer);
-        const text5 = msg.result?.content?.[0]?.text;
-        if (!msg.result?.isError || !text5) {
-          stdioFail(`expected INVALID_PARAMS for unknown key, got: ${JSON.stringify(msg).slice(0, 300)}`);
-        }
-        if (!/use "criteria", not "choice"/.test(text5) || !/questions\.q/.test(text5)) {
-          stdioFail(`expected choices-vs-criteria hint, got: ${text5}`);
-        }
-        if (text5.includes("hunter2")) {
-          stdioFail(`hint leaked state content: ${text5}`);
-        }
-        ok(`choices-vs-criteria hint: ${text5.slice(0, 200)}`);
-        // Explicitly-typed choice and score questions must still parse.
-        send({
-          jsonrpc: "2.0",
-          id: 6,
-          method: "tools/call",
-          params: {
-            name: "judge",
-            arguments: {
-              state: {},
-              questions: {
-                tier: {
-                  type: "choice",
-                  criteria: { confirm: "medium", demote: "simple", promote: "complex" },
-                },
-              },
-            },
-          },
-        });
-      } else if (msg.id === 6) {
-        clearTimeout(timer);
-        const text6 = msg.result?.content?.[0]?.text;
-        if (msg.error || !text6) {
-          stdioFail(`valid choice rejected by schema: ${JSON.stringify(msg).slice(0, 300)}`);
-        }
-        send({
-          jsonrpc: "2.0",
-          id: 7,
-          method: "tools/call",
-          params: {
-            name: "judge",
-            arguments: {
-              state: {},
-              questions: {
-                rating: {
-                  type: "score",
-                  criteria: ["low", "medium", "high"],
-                },
-              },
-            },
-          },
-        });
-      } else if (msg.id === 7) {
-        clearTimeout(timer);
-        const text7 = msg.result?.content?.[0]?.text;
-        if (msg.error || !text7) {
-          stdioFail(`valid score rejected by schema: ${JSON.stringify(msg).slice(0, 300)}`);
-        }
-        ok("explicitly-typed choice and score questions accepted");
-        // Issue #120: array-shaped questions rejected with a fix hint naming
-        // the expected map shape.
-        send({
-          jsonrpc: "2.0",
-          id: 8,
-          method: "tools/call",
-          params: {
-            name: "judge",
-            arguments: {
-              state: {},
-              questions: [{ type: "noul", instructions: "flat question" }],
-            },
-          },
-        });
-      } else if (msg.id === 8) {
-        clearTimeout(timer);
-        const text8 = msg.result?.content?.[0]?.text;
-        if (!msg.result?.isError || !text8) {
-          stdioFail(`expected INVALID_PARAMS for array questions, got: ${JSON.stringify(msg).slice(0, 300)}`);
-        }
-        if (!/expected a map of named question specs, got an array/.test(text8)) {
-          stdioFail(`expected array-questions hint, got: ${text8}`);
-        }
-        ok(`array-questions hint: ${text8.slice(0, 200)}`);
-        // Issue #122 + #142: tools/list must succeed (no -32603) and stay
-        // under 4 KiB. The original 3 KiB target left only 44 bytes of
-        // headroom; the #142 images schema (asset name -> local file path)
-        // adds ~400 bytes of JSON schema, so the cap is 4096.
-        send({ jsonrpc: "2.0", id: 9, method: "tools/list" });
-      } else if (msg.id === 9) {
-        clearTimeout(timer);
-        if (msg.error) {
-          stdioFail(`tools/list failed: ${JSON.stringify(msg.error).slice(0, 300)}`);
-        }
-        const toolsJson = JSON.stringify(msg.result);
-        const bytes = Buffer.byteLength(toolsJson);
-        if (!msg.result?.tools?.length) {
-          stdioFail(`tools/list returned no tools: ${toolsJson.slice(0, 200)}`);
-        }
-        if (bytes >= 4096) {
-          stdioFail(`tools/list payload too large: ${bytes} bytes (target < 4096)`);
-        }
-        ok(`tools/list ok (${bytes} bytes, under 4096)`);
-        send({
-          jsonrpc: "2.0",
-          id: 10,
-          method: "tools/call",
-          params: {
-            name: "judge",
-            arguments: {
-              state: {},
-              questions: {
-                rating: {
-                  type: "score",
-                  instructions: "rate it",
-                  criteria: Array.from({ length: 11 }, (_, i) => `level ${i + 1}`),
-                },
-              },
-            },
-          },
-        });
-      } else if (msg.id === 10) {
-        clearTimeout(timer);
-        const text10 = msg.result?.content?.[0]?.text;
-        if (!msg.result?.isError || !text10) {
-          stdioFail(`expected INVALID_PARAMS for 11 score levels, got: ${JSON.stringify(msg).slice(0, 300)}`);
-        }
-        if (!/at most 10 levels/.test(text10)) {
-          stdioFail(`expected 10-levels hint, got: ${text10}`);
-        }
-        ok(`score 11 levels rejected: ${text10.slice(0, 120)}`);
-        // Issue #122: API limits enforced in zod -- 256 choice options must be
-        // rejected at the schema layer.
-        const manyOptions = Object.fromEntries(
-          Array.from({ length: 256 }, (_, i) => [`option_${i}`, "description"]),
-        );        send({
-          jsonrpc: "2.0",
-          id: 11,
-          method: "tools/call",
-          params: {
-            name: "judge",
-            arguments: {
-              state: {},
-              questions: {
-                pick: { type: "choice", instructions: "pick one", criteria: manyOptions },
-              },
-            },
-          },
-        });
-      } else if (msg.id === 11) {
-        clearTimeout(timer);
-        const text11 = msg.result?.content?.[0]?.text;
-        if (!msg.result?.isError || !text11) {
-          stdioFail(`expected INVALID_PARAMS for 256 choice options, got: ${JSON.stringify(msg).slice(0, 300)}`);
-        }
-        if (!/at most 255 options/.test(text11)) {
-          stdioFail(`expected 255-options hint, got: ${text11}`);
-        }
-        ok(`choice 256 options rejected: ${text11.slice(0, 120)}`);
-        proc.kill("SIGKILL");
-        process.exit(0);
-      }
-    }
+  const init = await client.request("initialize", {
+    protocolVersion: "2025-11-25",
+    capabilities: {},
+    clientInfo: { name: "smoke-judge-test", version: "0.0.0" },
   });
+  if (!init.result || !init.result.protocolVersion) {
+    stdioFail(`initialize failed: ${JSON.stringify(init).slice(0, 300)}`);
+  }
 
-  let timer = setTimeout(
-    () => stdioFail(`no response within ${TIMEOUT_MS}ms`),
-    TIMEOUT_MS,
-  );
+  // Arrange: choice question with no criteria must fail construction.
+  const msg2 = await judge({ state: {}, questions: { q: { type: "choice", instructions: "pick one" } } });
+  const text = contentText(msg2);
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    stdioFail(`content is not a JSON payload: ${String(text).slice(0, 200)}`);
+  }
+  // Assert: fallback envelope with an error about choice criteria.
+  if (payload.fallback !== true) {
+    stdioFail(`expected fallback === true, got: ${text.slice(0, 200)}`);
+  }
+  if (!payload.error || !/criteria/i.test(payload.error) || !/questions\.q:/.test(payload.error)) {
+    stdioFail(`expected criteria error, got: ${text.slice(0, 200)}`);
+  }
+  ok(`default path fallback envelope: ${payload.error}`);
 
-  send({
-    jsonrpc: "2.0",
-    id: 1,
-    method: "initialize",
-    params: {
-      protocolVersion: "2025-11-25",
-      capabilities: {},
-      clientInfo: { name: "smoke-judge-test", version: "0.0.0" },
+  // Arrange: widened schema acceptance -- structured (object) instructions,
+  // a JSON criteria value, array state, and a model override. Offline the
+  // call falls back, but the input must NOT be rejected by zod.
+  const msg3 = await judge({
+    state: ["alpha", { beta: true }],
+    model: "jev-latest",
+    questions: {
+      q: {
+        type: "noul",
+        instructions: { text: "is the feature healthy?", locale: "en" },
+        criteria: { true: { detail: "yes" }, false: "no" },
+      },
     },
   });
+  const text3 = contentText(msg3);
+  if (msg3.error || /input validation|invalid_input|Invalid arguments/i.test(text3)) {
+    stdioFail(`widened input rejected by schema: ${JSON.stringify(msg3).slice(0, 300)}`);
+  }
+  let payload3;
+  try {
+    payload3 = JSON.parse(text3);
+  } catch {
+    stdioFail(`content is not a JSON payload: ${String(text3).slice(0, 200)}`);
+  }
+  if (typeof payload3.fallback !== "boolean") {
+    stdioFail(`expected fallback boolean, got: ${text3.slice(0, 200)}`);
+  }
+  if (payload3.error && /criteria/i.test(payload3.error)) {
+    stdioFail(`unexpected criteria error for structured input: ${text3.slice(0, 200)}`);
+  }
+  ok(`widened inputs accepted, fallback=${payload3.fallback}`);
 
-  proc.on("error", (err) => stdioFail(`failed to spawn server: ${err.message}`));
-  proc.on("exit", (code) => stdioFail(`server exited early with code ${code}`));
+  // Regression (issue #90): omitted `type` must be rejected with
+  // INVALID_PARAMS, not silently defaulted to noul.
+  const msg4 = await judge({
+    state: {},
+    questions: { q: { instructions: "Is this a defect?" } },
+  });
+  const text4 = contentText(msg4);
+  if (!msg4.result?.isError || !text4) {
+    stdioFail(`expected INVALID_PARAMS for omitted type, got: ${JSON.stringify(msg4).slice(0, 300)}`);
+  }
+  if (!/missing "type" \(noul\|choice\|score\)/.test(text4) || !/questions\.q/.test(text4)) {
+    stdioFail(`expected error naming "type", got: ${text4}`);
+  }
+  ok(`omitted type rejected: ${text4.slice(0, 120)}`);
+
+  // Regression (issue #90): unknown keys must be rejected, not stripped.
+  const msg5 = await judge({
+    // Secret state value: the hint must never echo caller content.
+    state: { secret: "hunter2" },
+    questions: {
+      q: { choice: true, criteria: { confirm: "yes", demote: "no" } },
+    },
+  });
+  const text5 = contentText(msg5);
+  if (!msg5.result?.isError || !text5) {
+    stdioFail(`expected INVALID_PARAMS for unknown key, got: ${JSON.stringify(msg5).slice(0, 300)}`);
+  }
+  if (!/use "criteria", not "choice"/.test(text5) || !/questions\.q/.test(text5)) {
+    stdioFail(`expected choices-vs-criteria hint, got: ${text5}`);
+  }
+  if (text5.includes("hunter2")) {
+    stdioFail(`hint leaked state content: ${text5}`);
+  }
+  ok(`choices-vs-criteria hint: ${text5.slice(0, 200)}`);
+
+  // Explicitly-typed choice and score questions must still parse.
+  const msg6 = await judge({
+    state: {},
+    questions: {
+      tier: {
+        type: "choice",
+        criteria: { confirm: "medium", demote: "simple", promote: "complex" },
+      },
+    },
+  });
+  const text6 = contentText(msg6);
+  if (msg6.error || !text6) {
+    stdioFail(`valid choice rejected by schema: ${JSON.stringify(msg6).slice(0, 300)}`);
+  }
+  const msg7 = await judge({
+    state: {},
+    questions: {
+      rating: {
+        type: "score",
+        criteria: ["low", "medium", "high"],
+      },
+    },
+  });
+  const text7 = contentText(msg7);
+  if (msg7.error || !text7) {
+    stdioFail(`valid score rejected by schema: ${JSON.stringify(msg7).slice(0, 300)}`);
+  }
+  ok("explicitly-typed choice and score questions accepted");
+
+  // Issue #120: array-shaped questions rejected with a fix hint naming
+  // the expected map shape.
+  const msg8 = await judge({
+    state: {},
+    questions: [{ type: "noul", instructions: "flat question" }],
+  });
+  const text8 = contentText(msg8);
+  if (!msg8.result?.isError || !text8) {
+    stdioFail(`expected INVALID_PARAMS for array questions, got: ${JSON.stringify(msg8).slice(0, 300)}`);
+  }
+  if (!/expected a map of named question specs, got an array/.test(text8)) {
+    stdioFail(`expected array-questions hint, got: ${text8}`);
+  }
+  ok(`array-questions hint: ${text8.slice(0, 200)}`);
+
+  // Issue #122 + #142: tools/list must succeed (no -32603) and stay
+  // under 4 KiB. The original 3 KiB target left only 44 bytes of
+  // headroom; the #142 images schema (asset name -> local file path)
+  // adds ~400 bytes of JSON schema, so the cap is 4096.
+  const msg9 = await client.request("tools/list");
+  if (msg9.error) {
+    stdioFail(`tools/list failed: ${JSON.stringify(msg9.error).slice(0, 300)}`);
+  }
+  const toolsJson = JSON.stringify(msg9.result);
+  const bytes = Buffer.byteLength(toolsJson);
+  if (!msg9.result?.tools?.length) {
+    stdioFail(`tools/list returned no tools: ${toolsJson.slice(0, 200)}`);
+  }
+  if (bytes >= 4096) {
+    stdioFail(`tools/list payload too large: ${bytes} bytes (target < 4096)`);
+  }
+  ok(`tools/list ok (${bytes} bytes, under 4096)`);
+
+  const msg10 = await judge({
+    state: {},
+    questions: {
+      rating: {
+        type: "score",
+        instructions: "rate it",
+        criteria: Array.from({ length: 11 }, (_, i) => `level ${i + 1}`),
+      },
+    },
+  });
+  const text10 = contentText(msg10);
+  if (!msg10.result?.isError || !text10) {
+    stdioFail(`expected INVALID_PARAMS for 11 score levels, got: ${JSON.stringify(msg10).slice(0, 300)}`);
+  }
+  if (!/at most 10 levels/.test(text10)) {
+    stdioFail(`expected 10-levels hint, got: ${text10}`);
+  }
+  ok(`score 11 levels rejected: ${text10.slice(0, 120)}`);
+
+  // Issue #122: API limits enforced in zod -- 256 choice options must be
+  // rejected at the schema layer.
+  const manyOptions = Object.fromEntries(
+    Array.from({ length: 256 }, (_, i) => [`option_${i}`, "description"]),
+  );
+  const msg11 = await judge({
+    state: {},
+    questions: {
+      pick: { type: "choice", instructions: "pick one", criteria: manyOptions },
+    },
+  });
+  const text11 = contentText(msg11);
+  if (!msg11.result?.isError || !text11) {
+    stdioFail(`expected INVALID_PARAMS for 256 choice options, got: ${JSON.stringify(msg11).slice(0, 300)}`);
+  }
+  if (!/at most 255 options/.test(text11)) {
+    stdioFail(`expected 255-options hint, got: ${text11}`);
+  }
+  ok(`choice 256 options rejected: ${text11.slice(0, 120)}`);
+
+  // Assert: graceful shutdown; the script continues only after a clean exit.
+  const exitCode = await client.close();
+  if (exitCode !== 0) stdioFail(`server exited with code ${exitCode}`);
 }
+
 
 // Issue #142: live image smoke case -- only when TYPESAFE_API_KEY is set.
 // Writes a solid 256x256 PNG to a temp file and calls the SDK directly (as
@@ -1334,11 +1130,11 @@ async function runLiveImageSmokeTest() {
     fail(`live image smoke: request failed: ${err}`);
   }
 }
-await runOfflineCloudflareTests();
 
+await runOfflineCloudflareTests();
 await runOfflineTypesafeTests();
 await runEnvModelOverrideTest();
-await runCloudflareSpecRejectionCase();
+
 await runStartupFailureCase(
   "missing CLOUDFLARE_API_TOKEN",
   { JUDGE_PROVIDER: "cloudflare-workers-ai" },
@@ -1362,5 +1158,6 @@ await runStartupFailureCase(
 );
 
 await runStdioDiscoverTest();
-await runLiveImageSmokeTest();
 await runStdioDefaultPathTest();
+await runCloudflareSpecRejectionCase();
+await runLiveImageSmokeTest();
