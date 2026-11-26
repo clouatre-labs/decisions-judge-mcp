@@ -5,10 +5,13 @@
 // (401/403) and other 4xx fail fast. Abort-aware via an AbortController
 // combining timeout_ms and the caller's signal.
 //
-// Clef contract (issue #160): POST /client/v4/accounts/{id}/ai/run/@cf/cloudflare/clef
-// with a flat body {model, state, questions}, where `model` is the input
-// selector ("clef" or "clef-flash"). The response is unwrapped from
-// result.{answers, model, usage}. Clef is a rolling alias with no version pin.
+// Clef contract (issue #160):
+// POST /client/v4/accounts/{id}/ai/run/@cf/cloudflare/clef with a flat body
+// {model, state, questions[, images]}, where `model` is the input selector
+// ("clef" or "clef-flash"). `images` (issue #163) is an array of at most 4
+// entries {content_type, base64}, present only when images are supplied.
+// The response is unwrapped from result.{answers, model, usage}. Clef is a
+// rolling alias with no version pin.
 //
 // Any surfaced error string is scrubbed of the token and account id values
 // before reaching the caller.
@@ -81,16 +84,34 @@ function isPlainObject(value) {
   return Object.prototype.toString.call(value) === "[object Object]";
 }
 
-export async function cloudflareJudge({ state, questions, images, model, timeout_ms, signal }) {
-  // Fail closed on images: image-backed questions are typesafe-api-only (see
-  // issue #142). The
-  // check runs before any fetch so no image bytes are ever sent.
-  const imageNames = images && typeof images === "object" ? Object.keys(images) : [];
-  if (imageNames.length > 0) {
-    throw new Error(
-      "images are not supported by the cloudflare-workers-ai provider; use the typesafe-api provider for image-backed questions",
-    );
+// Clef accepts at most 4 images per request (issue #163).
+const CF_MAX_IMAGES = 4;
+
+// Map the first byte of the decoded image to a MIME type. The server already
+// validates PNG/JPEG magic bytes, so anything else is a programming error.
+function cfImageContentType(firstByte) {
+  if (firstByte === 0x89) return "image/png";
+  if (firstByte === 0xff) return "image/jpeg";
+  throw new Error("cloudflare provider supports PNG and JPEG images only");
+}
+
+// Build the Clef `images` array from the server-encoded {name: base64} map, in
+// map key order. The 4-image cap is enforced here, before any request, so an
+// oversized set never reaches the API (issue #163).
+function buildClefImages(images) {
+  if (!images || typeof images !== "object") return [];
+  const names = Object.keys(images);
+  if (names.length > CF_MAX_IMAGES) {
+    throw new Error(`cloudflare provider accepts at most ${CF_MAX_IMAGES} images per request; got ${names.length}`);
   }
+  return names.map((name) => {
+    const decoded = Buffer.from(String(images[name]), "base64");
+    return { content_type: cfImageContentType(decoded[0]), base64: images[name] };
+  });
+}
+
+export async function cloudflareJudge({ state, questions, images, model, timeout_ms, signal }) {
+  const clefImages = buildClefImages(images);
   const token = process.env.CLOUDFLARE_API_TOKEN;
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   if (!token) {
@@ -123,6 +144,7 @@ export async function cloudflareJudge({ state, questions, images, model, timeout
       ...(selector ? { model: selector } : {}),
       state,
       questions,
+      ...(clefImages.length > 0 ? { images: clefImages } : {}),
     });
     let lastErr = null;
     for (let attempt = 0; attempt <= CF_RETRY_LIMIT; attempt++) {

@@ -162,7 +162,7 @@ Instructions and criteria values accept either plain strings or arbitrary JSON s
 
 ### Image-backed noul and choice questions (preview)
 
-The optional `images` map enables image-backed `noul` and `choice` questions on the `typesafe-api` provider only. Each entry maps an asset name to a local PNG or JPEG file path; the server reads the file and validates it (PNG/JPEG magic bytes, 256-1568 px per side, max 16 MiB) before base64-encoding it for the API. Reference an asset as `<name>` in `noul`/`choice` instructions; every image must be referenced by at least one such question, and `score`/`box` questions over images are rejected. The Cloudflare provider fails closed on images with a fallback envelope. Preview status: the contract may change; the model accuracy rubric it ships behind is recorded in `docs/audit/2026-11-24-image-rubric-rerun.md`.
+The optional `images` map enables image-backed `noul` and `choice` questions on both providers. Each entry maps an asset name to a local PNG or JPEG file path; the server reads the file and validates it (PNG/JPEG magic bytes, 256-1568 px per side, max 16 MiB) before base64-encoding it for the API. Reference an asset as `<name>` in `noul`/`choice` instructions; every image must be referenced by at least one such question, and `score`/`box` questions over images are rejected. The `cloudflare-workers-ai` provider forwards images to Clef, which accepts at most 4 images per request (a larger set is rejected before any request); Clef's own per-image and request body size limits are lower than the server's 16 MiB file cap, so an oversized image surfaces as a Cloudflare API error in the fallback envelope. Preview status: the contract may change; the model accuracy rubric it ships behind is recorded in `docs/audit/2026-11-24-image-rubric-rerun.md`.
 
 ```jsonc
 {
@@ -245,7 +245,7 @@ Fill in the state and send it to the judge tool.
 
 ## Providers
 
-Selected once at startup via `JUDGE_PROVIDER` (default `typesafe-api`); the judge tool's schema and behavior are identical under both providers. `typesafe-api` uses `@typesafe-ai/sdk` with one or more TypeSafe API keys (rotation details in [Configuration](#configuration)); `cloudflare-workers-ai` runs Cloudflare's Clef decision model (default `@cf/cloudflare/clef`, a rolling alias with no version pin; a `clef` or `clef-flash` `model` override selects the same family) through Cloudflare Workers AI and requires the two Cloudflare variables above.
+Selected once at startup via `JUDGE_PROVIDER` (default `typesafe-api`); the judge tool's schema and behavior are identical under both providers, and both accept the `images` input (at most 4 images per request on `cloudflare-workers-ai`). `typesafe-api` uses `@typesafe-ai/sdk` with one or more TypeSafe API keys (rotation details in [Configuration](#configuration)); `cloudflare-workers-ai` runs Cloudflare's Clef decision model (default `@cf/cloudflare/clef`, a rolling alias with no version pin; a `clef` or `clef-flash` `model` override selects the same family) through Cloudflare Workers AI and requires the two Cloudflare variables above.
 
 ## Development
 
@@ -255,7 +255,7 @@ node --check server.mjs
 node scripts/smoke.mjs         # MCP stdio initialize handshake
 node scripts/smoke-judge.mjs   # judge fallback envelope (no API key needed)
 # Image accuracy probe (issue #95; needs TYPESAFE_API_KEY, makes live API calls):
-# node scripts/probe-images.mjs [--model jev-1.14.0]
+# node scripts/probe-images.mjs [--model jev-1.14.0] [--provider cloudflare [--model clef|clef-flash]]
 node server.mjs                # stdio server; needs TYPESAFE_API_KEY to answer
 ```
 

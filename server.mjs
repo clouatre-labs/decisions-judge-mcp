@@ -219,7 +219,7 @@ function buildServer() {
     "judge",
     {
       description:
-        'Ask the TypeSafe System One model typed questions (noul/choice/score) about JSON application state in one fast request. Preview: optional images map of asset name to local PNG/JPEG file path (256-1568 px, max 16 MiB) enables image-backed noul/choice via <name> references in instructions. Default model jev-1.14.0, overridable via TYPESAFE_DEFAULT_MODEL or model. Returns {answers, model, usage} or {fallback: true, error}.',
+        'Ask the TypeSafe System One model typed questions (noul/choice/score) about JSON application state in one fast request. Preview: optional images map of asset name to local PNG/JPEG file path (256-1568 px, max 16 MiB) enables image-backed noul/choice via <name> references in instructions (both providers; at most 4 images per request on cloudflare-workers-ai). Default model jev-1.14.0, overridable via TYPESAFE_DEFAULT_MODEL or model. Returns {answers, model, usage} or {fallback: true, error}.',
       inputSchema,
       outputSchema,
       annotations: {
