@@ -7,13 +7,19 @@
 // to the SDK directly to measure raw model accuracy for image-backed noul,
 // which the judge contract currently does not accept.
 //
-// Usage: node scripts/probe-images.mjs [--model jev-1.14.0]
+// Usage: node scripts/probe-images.mjs [--model jev-1.14.0] [--provider cloudflare [--model clef|clef-flash]]
+// --provider cloudflare (issue #163) runs the same synthetic PNGs through the
+// cloudflare-workers-ai provider against Clef; it needs CLOUDFLARE_API_TOKEN and
+// CLOUDFLARE_ACCOUNT_ID in env. The box question is skipped on that path because
+// Clef has no box question type (issue #143 wording of the noul is unchanged).
 import { TypeSafeClient, box, image, noul } from "@typesafe-ai/sdk";
 import { deflateSync } from "node:zlib";
+import { cloudflareJudge } from "../providers/cloudflare-workers-ai.mjs";
 
+const CLOUDFLARE = process.argv.includes("--provider") && process.argv[process.argv.indexOf("--provider") + 1] === "cloudflare";
 const MODEL = process.argv.includes("--model")
   ? process.argv[process.argv.indexOf("--model") + 1]
-  : "jev-1.14.0";
+  : CLOUDFLARE ? "clef" : "jev-1.14.0";
 const SIZE = 512;
 
 // CRC32 for PNG chunks.
@@ -102,33 +108,58 @@ for (const c of CASES) {
   );
   const truth = { top: frac(c.top), bottom: frac(c.bottom), left: frac(c.left), right: frac(c.right) };
   try {
-    const { answers, usage } = await client.systemOne(
-      {
-        state: image(png),
+    let answers, usage;
+    if (CLOUDFLARE) {
+      const pngB64 = png.toString("base64");
+      const res = await cloudflareJudge({
+        // Clef sees the PNG only when it is passed in the images map (issue
+        // #163); embedding it in state scores near zero, as if no image was sent.
+        state: {},
+        images: { shot: pngB64 },
+        // cloudflareJudge takes raw question specs, not SDK question builders
+        // (issue #143 wording of the noul is unchanged).
         questions: {
-          locate: box(`The ${c.name} square`),
-          is_present: noul(`Is there a solid ${c.name} colored region in the image?`),
+          is_present: {
+            type: "noul",
+            instructions: `Is there a solid ${c.name} colored region in the image?`,
+          },
         },
         model: MODEL,
-      },
-      { headers: { "TypeSafe-Danger-Zone-Images": "true" }, timeout: 60_000 },
-    );
-    const got = answers.locate.box;
-    const score = iou(truth, got);
+        timeout_ms: 60_000,
+      });
+      answers = res.answers;
+      usage = res.usage;
+    } else {
+      const res = await client.systemOne(
+        {
+          state: image(png),
+          questions: {
+            locate: box(`The ${c.name} square`),
+            is_present: noul(`Is there a solid ${c.name} colored region in the image?`),
+          },
+          model: MODEL,
+        },
+        { headers: { "TypeSafe-Danger-Zone-Images": "true" }, timeout: 60_000 },
+      );
+      answers = res.answers;
+      usage = res.usage;
+    }
+    const got = answers.locate?.box;
+    const score = got ? iou(truth, got) : null;
     const noulP = answers.is_present.noul;
     results.push({
       case: c.name,
       truth,
-      box: got,
-      iou: Number(score.toFixed(3)),
+      ...(got ? { box: got } : {}),
+      iou: score === null ? null : Number(score.toFixed(3)),
       noul: noulP,
       noul_correct: noulP >= 0.5,
-      confidence: answers.locate.confidence,
+      confidence: answers.locate?.confidence,
       usage,
     });
     console.error(
-      `${c.name}: IoU=${score.toFixed(3)} noul=${noulP.toFixed(3)} ` +
-        `(in=${usage?.prompt_tokens} out=${usage?.completion_tokens})`,
+      `${c.name}: ${got ? `IoU=${score.toFixed(3)} ` : ""}noul=${noulP.toFixed(3)} ` +
+        `(in=${usage?.prompt_tokens ?? usage?.input_tokens} out=${usage?.completion_tokens ?? usage?.output_tokens})`,
     );
   } catch (err) {
     results.push({ case: c.name, error: String(err) });
@@ -142,7 +173,7 @@ const summary = {
   model: MODEL,
   images: CASES.length,
   box_mean_iou: boxes.length ? Number((boxes.reduce((s, r) => s + r.iou, 0) / boxes.length).toFixed(3)) : null,
-  box_pass_rubric: boxes.length === CASES.length && boxes.reduce((s, r) => s + r.iou, 0) / boxes.length >= 0.8,
+  box_pass_rubric: !CLOUDFLARE && boxes.length === CASES.length && boxes.reduce((s, r) => s + r.iou, 0) / boxes.length >= 0.8,
   noul_correct: noulCases.filter((r) => r.noul_correct).length,
   noul_total: noulCases.length,
   noul_pass_rubric: noulCases.length === CASES.length && noulCases.filter((r) => r.noul_correct).length >= 9,

@@ -141,7 +141,8 @@ async function runOfflineCloudflareTests() {
       ) {
         fail(`cloudflare happy path: unexpected flat body ${JSON.stringify(lastBody)}`);
       }
-      ok("cloudflare happy path");
+      if ("images" in lastBody) fail(`cloudflare happy path: unexpected images key ${JSON.stringify(lastBody)}`);
+      ok("cloudflare happy path (no images key in body)");
 
       // Issue #160: default model is @cf/cloudflare/clef; bare clef and
       // clef-flash overrides are prefixed.
@@ -341,8 +342,40 @@ async function runOfflineCloudflareTests() {
       ok("cloudflare secret redaction");
     }
 
-    // Edge case (issue #142): images are typesafe-api-only -- the Cloudflare
-    // path fails closed before any fetch (no image bytes ever sent).
+    // Issue #163: images are forwarded to Clef as an ordered array of
+    // {content_type, base64} in map key order, after state and questions.
+    for (const [label, png, jpeg] of [
+      ["PNG", "iVBORw0KGgo=", null],
+      ["JPEG", null, "/9j/4AAQ"],
+    ]) {
+      let calls = 0;
+      let lastBody = null;
+      globalThis.fetch = async (_url, init) => {
+        calls++;
+        lastBody = JSON.parse(init?.body ?? "{}");
+        return fakeResponse({ body: CLEF_BODY });
+      };
+      const images = {};
+      if (png) images.shot = png;
+      if (jpeg) images.photo = jpeg;
+      const out = await cloudflareJudge({ ...judgeArgs, images });
+      const wantImages = [
+        ...(png ? [{ content_type: "image/png", base64: png }] : []),
+        ...(jpeg ? [{ content_type: "image/jpeg", base64: jpeg }] : []),
+      ];
+      if (out.fallback !== false) fail(`cloudflare images ${label}: unexpected result ${JSON.stringify(out)}`);
+      if (calls !== 1) fail(`cloudflare images ${label}: expected 1 fetch call, got ${calls}`);
+      if (
+        JSON.stringify(lastBody) !==
+        JSON.stringify({ model: "clef", state: judgeArgs.state, questions: judgeArgs.questions, images: wantImages })
+      ) {
+        fail(`cloudflare images ${label}: unexpected body ${JSON.stringify(lastBody)}`);
+      }
+      ok(`cloudflare images ${label} forwarded as {content_type, base64} array`);
+    }
+
+    // Edge case (issue #163): Clef caps a request at 4 images; a larger set is
+    // rejected before any fetch, naming the limit.
     {
       let calls = 0;
       globalThis.fetch = async () => {
@@ -353,18 +386,15 @@ async function runOfflineCloudflareTests() {
       try {
         await cloudflareJudge({
           ...judgeArgs,
-          questions: {
-            defect: { type: "noul", instructions: "Is there a defect in <shot>?" },
-          },
-          images: { shot: "aGk=" },
+          images: { a: "iVBORw0KGgo=", b: "iVBORw0KGgo=", c: "iVBORw0KGgo=", d: "iVBORw0KGgo=", e: "iVBORw0KGgo=" },
         });
       } catch (err) {
         caught = err;
       }
-      if (!caught || !/images/.test(caught.message) || !/cloudflare/.test(caught.message) || calls !== 0) {
-        fail(`cloudflare images fail-closed: expected pre-fetch throw, got ${String(caught)} calls=${calls}`);
+      if (!caught || !/4 images/.test(caught.message) || calls !== 0) {
+        fail(`cloudflare images cap: expected pre-fetch throw naming 4, got ${String(caught)} calls=${calls}`);
       }
-      ok(`cloudflare images fail-closed (${caught.message})`);
+      ok(`cloudflare images cap (${caught.message})`);
     }
 
   } finally {
